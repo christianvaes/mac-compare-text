@@ -29,8 +29,16 @@ The whole app ships as a single file — no compiling needed:
 1. **[Download CompareText.zip](dist/CompareText.zip?raw=true)** and
    double-click to unpack.
 2. Drag `CompareText.app` to the **Applications** folder.
-3. First launch: **right-click → Open → Open** (needed once because the app
-   is not distributed through the App Store).
+3. Remove the download quarantine flag (one-time, in Terminal):
+
+   ```sh
+   xattr -d com.apple.quarantine /Applications/CompareText.app
+   ```
+
+   This step is needed because the app is not notarized by Apple (that
+   requires a paid developer account). macOS otherwise reports downloaded
+   unnotarized apps as "damaged" — the file itself is fine. If you build
+   from source instead, no quarantine flag is set and the app just runs.
 
 No dependencies, no configuration, nothing machine-specific.
 
