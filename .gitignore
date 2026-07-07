@@ -1,4 +1,6 @@
 build/
-dist/
 .DS_Store
 .claude/
+# dist/CompareText.zip is committed on purpose: ready-to-run download
+dist/*
+!dist/CompareText.zip
