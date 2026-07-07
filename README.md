@@ -26,19 +26,12 @@ website (www.cvaes.nl).
 
 The whole app ships as a single file — no compiling needed:
 
-1. **[Download CompareText.zip](dist/CompareText.zip?raw=true)** and
-   double-click to unpack.
+1. **[Download CompareText.zip](https://raw.githubusercontent.com/christianvaes/mac-compare-text/main/dist/CompareText.zip)**
+   (344 KB) and double-click to unpack.
 2. Drag `CompareText.app` to the **Applications** folder.
-3. Remove the download quarantine flag (one-time, in Terminal):
-
-   ```sh
-   xattr -d com.apple.quarantine /Applications/CompareText.app
-   ```
-
-   This step is needed because the app is not notarized by Apple (that
-   requires a paid developer account). macOS otherwise reports downloaded
-   unnotarized apps as "damaged" — the file itself is fine. If you build
-   from source instead, no quarantine flag is set and the app just runs.
+3. First launch: if macOS reports the app as damaged or from an unknown
+   developer (it is not notarized by Apple), run this once in Terminal:
+   `xattr -d com.apple.quarantine /Applications/CompareText.app`
 
 No dependencies, no configuration, nothing machine-specific.
 
