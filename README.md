@@ -24,9 +24,10 @@ website (www.cvaes.nl).
 
 ## Installation (any Mac, Apple Silicon or Intel)
 
-The whole app ships as a single file: `dist/CompareText.zip`.
+The whole app ships as a single file — no compiling needed:
 
-1. Copy the zip to the other Mac and double-click to unpack.
+1. **[Download CompareText.zip](dist/CompareText.zip?raw=true)** and
+   double-click to unpack.
 2. Drag `CompareText.app` to the **Applications** folder.
 3. First launch: **right-click → Open → Open** (needed once because the app
    is not distributed through the App Store).
