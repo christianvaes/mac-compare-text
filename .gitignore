@@ -1,5 +1,6 @@
 build/
 .DS_Store
+# local tool and editor directories (hidden folders)
 .*/
 # dist/CompareText.zip is committed on purpose: ready-to-run download
 dist/*

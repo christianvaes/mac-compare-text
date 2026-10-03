@@ -137,7 +137,26 @@ enum DebugSelfTest {
         controller.right.setText("zelfde\ntekst")
         controller.compareNow {
             check("identical no hunks", controller.hunkAnchors.isEmpty)
-            bigTextStage(controller: controller)
+            whitespaceStage(controller: controller)
+        }
+    }
+
+    private static func whitespaceStage(controller: MainWindowController) {
+        // 7b. Whitespace toggle: indent-shifted text with extra blank lines is
+        // "identical" by default; strict mode shows the differences.
+        controller.left.setText("regel een\n  regel twee\nregel drie")
+        controller.right.setText("    regel een\n\n      regel twee\n\n    regel drie")
+        controller.setIgnoresWhitespace(true)
+        controller.compareNow {
+            check("whitespace-only: no hunks", controller.hunkAnchors.isEmpty)
+            check("whitespace-only: summary mentions it", controller.summaryText == L10n.identicalExceptWhitespace)
+
+            controller.setIgnoresWhitespace(false)
+            controller.compareNow {
+                check("strict: differences shown", !controller.hunkAnchors.isEmpty)
+                controller.setIgnoresWhitespace(true)
+                bigTextStage(controller: controller)
+            }
         }
     }
 
