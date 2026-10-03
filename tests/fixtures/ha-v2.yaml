@@ -1,0 +1,78 @@
+alias: Vaatwasser starten op de goedkoopste prijs
+description: >-
+  Druk op start op afstand en sluit de deur. Home Assistant zet auto 2 en start dat met
+  uitstel tot het goedkoopste blok dat voor 18:00 klaar is. Wordt er teruggeleverd, dan
+  start hij meteen.
+trigger_variables:
+  vanaf_teruglevering: 1500
+triggers:
+  - alias: Deur wordt gesloten
+    trigger: state
+    entity_id: sensor.vaatwasser_deur
+    to: closed
+    not_from:
+      - unavailable
+      - unknown
+    id: deur
+    note: Zonder not_from vuurt hij ook als de integratie even wegvalt en terugkomt.
+
+  - alias: Teruglevering terwijl hij op zijn starttijd wacht
+    trigger: template
+    value_template: >-
+      {{ is_state('sensor.vaatwasser_operation_state', 'delayedstart') }}
+    for:
+      minutes: 8
+    id: overschot
+variables:
+  kwartieren: 10
+  prijssensor: sensor.nordpool_kwh_nl_eur_4_10_0
+actions:
+  - choose:
+      - alias: Deur dicht, plan het goedkoopste blok
+        conditions:
+          - condition: trigger
+            id: deur
+          - alias: De machine is vrij
+            condition: state
+            entity_id: sensor.vaatwasser_operation_state
+            state: ready
+            note: Draait hij al of staat er een uitgestelde start klaar, dan blijft dat zo.
+        sequence:
+          - alias: Wachten tot de knop binnen is, hoogstens een minuut
+            wait_template: |-
+              {{ is_state('binary_sensor.vaatwasser_remote_start','on')
+                 and is_state('sensor.vaatwasser_deur','closed') }}
+            timeout:
+              seconds: 60
+            continue_on_timeout: false
+
+          - variables:
+              start_seconden: |-
+                {% set klaar_om = today_at('18:00') %}
+
+          - alias: Zet het programma op auto 2
+            action: select.select_option
+            target:
+              entity_id: select.vaatwasser_selected_program
+            data:
+              option: dishcare_dishwasher_program_auto_2
+            continue_on_error: true
+
+          - alias: Start het programma, met uitstel of meteen
+            action: home_connect.start_selected_program
+            data:
+              device_id: 956af9be1c1a7a456436fd8ead80c97d
+              b_s_h_common_option_start_in_relative: "{{ start_seconden }}"
+
+      - alias: Teruglevering, start nu
+        conditions:
+          - condition: trigger
+            id: overschot
+        sequence:
+          - alias: Zet de uitgestelde start op een minuut
+            action: number.set_value
+            target:
+              entity_id: number.vaatwasser_begin_relatief
+            data:
+              value: 60
+mode: restart

@@ -4,30 +4,30 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>nl</string>
+	<key>CFBundleDisplayName</key>
+	<string>Vergelijk Tekst</string>
 	<key>CFBundleExecutable</key>
 	<string>CompareText</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.christianvaes.CompareText</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>CompareText</string>
-	<key>CFBundleDisplayName</key>
-	<string>Vergelijk Tekst</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.3</string>
+	<string>1.4</string>
 	<key>CFBundleVersion</key>
 	<string>2</string>
-	<key>LSMinimumSystemVersion</key>
-	<string>14.0</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.developer-tools</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
-	<key>CFBundleIconFile</key>
-	<string>AppIcon</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

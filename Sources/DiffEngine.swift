@@ -51,9 +51,10 @@ struct DiffResult: Sendable {
 }
 
 enum DiffEngine {
-    /// Below this prefix/suffix similarity, a changed pair gets only the
-    /// line-level color and no character-level emphasis.
-    private static let inlineSimilarityThreshold = 0.3
+    /// Positionally aligned lines are only treated as an edited pair when
+    /// they are at least this similar; otherwise they are classified as a
+    /// removal plus an insertion (and stay available for move detection).
+    private static let pairSimilarityThreshold = 0.3
 
     /// One side of the comparison: original lines for display, normalized
     /// keys of the kept lines for matching, and the mapping back.
@@ -144,12 +145,19 @@ enum DiffEngine {
                 let lineB = b.original(prefix + ib)
                 result.leftChanged.insert(lineA)
                 result.rightChanged.insert(lineB)
-                // Barely-similar pairs (common in merged hunks) get only the
-                // line-level color; character emphasis would be noise.
-                if similarity(aMid[ia], bMid[ib]) >= inlineSimilarityThreshold {
+                let keyA = aMid[ia]
+                let keyB = bMid[ib]
+                if keyA != keyB, similarity(keyA, keyB) >= pairSimilarityThreshold {
                     let (rangesA, rangesB) = intraline(a.lines[lineA], b.lines[lineB])
                     if !rangesA.isEmpty { result.leftInline[lineA] = rangesA }
                     if !rangesB.isEmpty { result.rightInline[lineB] = rangesB }
+                } else {
+                    // Not really the same line edited: equal keys mean crossed
+                    // (moved) content the LCS could not match, dissimilar keys
+                    // mean an unrelated removal next to an insertion. Keep
+                    // both available for move detection.
+                    pureRemovedKept.append(prefix + ia)
+                    pureInsertedKept.append(prefix + ib)
                 }
                 ia += 1
                 ib += 1
