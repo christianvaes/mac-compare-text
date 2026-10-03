@@ -11,6 +11,19 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         override func resizeSubviews(withOldSize oldSize: NSSize) { onLayout?() }
     }
 
+    /// Split view with a wide empty gutter as divider; the moved-block
+    /// overlay draws its connector ribbons in that gutter.
+    final class GutterSplitView: NSSplitView {
+        static let gutterWidth: CGFloat = 28
+
+        override var dividerThickness: CGFloat { Self.gutterWidth }
+
+        override func drawDivider(in rect: NSRect) {
+            NSColor.windowBackgroundColor.setFill()
+            rect.fill()
+        }
+    }
+
     /// Bottom bar with its own background and hairline so it reads clearly
     /// in both light and dark mode.
     final class BarView: NSView {
@@ -30,7 +43,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     let scrollSync: ScrollSyncCoordinator
 
     private let root = RootView()
-    private let splitView = NSSplitView()
+    private let splitView = GutterSplitView()
     private let bar = BarView()
     private let summaryLabel = NSTextField(labelWithString: L10n.hintStart)
     private let compareButton = NSButton(title: L10n.compare, target: nil, action: nil)
