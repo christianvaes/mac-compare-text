@@ -23,10 +23,11 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     }
 
     let window: NSWindow
-    let left = PaneController(title: "\(L10n.leftTitle)   —   \(L10n.leftLegend)",
+    let left = PaneController(title: "\(L10n.leftTitle)   —   \(L10n.leftLegend) · \(L10n.movedLegend)",
                               placeholderText: L10n.leftPlaceholder)
-    let right = PaneController(title: "\(L10n.rightTitle)   —   \(L10n.rightLegend)",
+    let right = PaneController(title: "\(L10n.rightTitle)   —   \(L10n.rightLegend) · \(L10n.movedLegend)",
                                placeholderText: L10n.rightPlaceholder)
+    let scrollSync: ScrollSyncCoordinator
 
     private let root = RootView()
     private let splitView = NSSplitView()
@@ -38,17 +39,22 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     private let previousButton = NSButton(title: "◀", target: nil, action: nil)
     private let nextButton = NSButton(title: "▶", target: nil, action: nil)
     private let whitespaceCheckbox = NSButton(checkboxWithTitle: L10n.ignoreWhitespace, target: nil, action: nil)
+    private let scrollTogetherCheckbox = NSButton(checkboxWithTitle: L10n.scrollTogether, target: nil, action: nil)
+    private let movedOverlay = MovedLinksOverlay()
 
     private static let ignoreWhitespaceDefaultsKey = "ignoreWhitespace"
+    private static let scrollTogetherDefaultsKey = "scrollTogether"
 
     private static let barHeight: CGFloat = 46
     private static let removedLineColor = NSColor.systemRed.withAlphaComponent(0.18)
     private static let removedInlineColor = NSColor.systemRed.withAlphaComponent(0.42)
     private static let addedLineColor = NSColor.systemGreen.withAlphaComponent(0.18)
     private static let addedInlineColor = NSColor.systemGreen.withAlphaComponent(0.42)
+    private static let movedLineColor = NSColor.systemOrange.withAlphaComponent(0.18)
 
     private var comparing = false
     private(set) var hunkAnchors: [(left: Int, right: Int)] = []
+    private(set) var movedPairs: [MovedBlock] = []
     private var currentHunk = -1
 
     /// One toggle drives both options: whitespace and blank lines.
@@ -69,7 +75,13 @@ final class MainWindowController: NSObject, NSWindowDelegate {
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false
         )
+        scrollSync = ScrollSyncCoordinator(left: left, right: right)
         super.init()
+
+        let defaults = UserDefaults.standard
+        scrollSync.isEnabled = defaults.object(forKey: Self.scrollTogetherDefaultsKey) == nil
+            ? true
+            : defaults.bool(forKey: Self.scrollTogetherDefaultsKey)
 
         window.title = L10n.appName
         window.minSize = NSSize(width: 900, height: 500)
@@ -102,7 +114,13 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         whitespaceCheckbox.toolTip = L10n.ignoreWhitespaceTooltip
         whitespaceCheckbox.state = ignoresWhitespace ? .on : .off
 
+        scrollTogetherCheckbox.target = self
+        scrollTogetherCheckbox.action = #selector(toggleScrollTogether(_:))
+        scrollTogetherCheckbox.toolTip = L10n.scrollTogetherTooltip
+        scrollTogetherCheckbox.state = scrollSync.isEnabled ? .on : .off
+
         bar.addSubview(summaryLabel)
+        bar.addSubview(scrollTogetherCheckbox)
         bar.addSubview(whitespaceCheckbox)
         bar.addSubview(previousButton)
         bar.addSubview(nextButton)
@@ -112,6 +130,9 @@ final class MainWindowController: NSObject, NSWindowDelegate {
 
         root.addSubview(splitView)
         root.addSubview(bar)
+        // Topmost, so its drawing is never overdrawn (macOS 26 z-order).
+        root.addSubview(movedOverlay)
+        movedOverlay.configure(left: left, right: right)
         root.onLayout = { [weak self] in self?.layoutRoot() }
 
         window.contentView = root
@@ -157,13 +178,16 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         bar.frame = NSRect(x: 0, y: 0, width: bounds.width, height: Self.barHeight)
         splitView.frame = NSRect(x: 0, y: Self.barHeight,
                                  width: bounds.width, height: bounds.height - Self.barHeight)
+        movedOverlay.frame = splitView.frame
 
-        for button in [compareButton, clearButton, swapButton, previousButton, nextButton, whitespaceCheckbox] {
+        for button in [compareButton, clearButton, swapButton, previousButton, nextButton,
+                       whitespaceCheckbox, scrollTogetherCheckbox] {
             button.sizeToFit()
         }
         let buttonY = (Self.barHeight - compareButton.frame.height) / 2
         var x = bounds.width - 12
-        for button in [compareButton, clearButton, swapButton, nextButton, previousButton, whitespaceCheckbox] {
+        for button in [compareButton, clearButton, swapButton, nextButton, previousButton,
+                       whitespaceCheckbox, scrollTogetherCheckbox] {
             x -= button.frame.width
             button.frame.origin = NSPoint(x: x, y: buttonY)
             x -= 8
@@ -197,9 +221,25 @@ final class MainWindowController: NSObject, NSWindowDelegate {
 
     private func textsEdited() {
         hunkAnchors = []
+        movedPairs = []
         currentHunk = -1
         updateNavigationButtons()
+        scrollSync.invalidate()
+        movedOverlay.clear()
         setSummary(L10n.hintEdited)
+    }
+
+    @objc private func toggleScrollTogether(_ sender: Any?) {
+        setScrollTogether(scrollTogetherCheckbox.state == .on)
+    }
+
+    func setScrollTogether(_ on: Bool) {
+        scrollSync.isEnabled = on
+        scrollTogetherCheckbox.state = on ? .on : .off
+        UserDefaults.standard.set(on, forKey: Self.scrollTogetherDefaultsKey)
+        if on {
+            scrollSync.alignNow(drivenBy: left)
+        }
     }
 
     private func updateNavigationButtons() {
@@ -237,21 +277,34 @@ final class MainWindowController: NSObject, NSWindowDelegate {
             guard left.generation == leftGeneration, right.generation == rightGeneration else { return }
 
             left.applyHighlights(lines: result.leftChanged, inline: result.leftInline,
-                                 lineColor: Self.removedLineColor, inlineColor: Self.removedInlineColor)
+                                 lineColor: Self.removedLineColor, inlineColor: Self.removedInlineColor,
+                                 movedLines: result.leftMoved, movedColor: Self.movedLineColor)
             right.applyHighlights(lines: result.rightChanged, inline: result.rightInline,
-                                  lineColor: Self.addedLineColor, inlineColor: Self.addedInlineColor)
+                                  lineColor: Self.addedLineColor, inlineColor: Self.addedInlineColor,
+                                  movedLines: result.rightMoved, movedColor: Self.movedLineColor)
 
             hunkAnchors = result.hunkAnchors
+            movedPairs = result.movedPairs
             currentHunk = -1
             updateNavigationButtons()
 
+            scrollSync.activate(matchedLines: result.matchedLines,
+                                leftLineCount: left.lineCount, rightLineCount: right.lineCount,
+                                leftGeneration: leftGeneration, rightGeneration: rightGeneration)
+            movedOverlay.update(pairs: result.movedPairs,
+                                leftGeneration: leftGeneration, rightGeneration: rightGeneration)
+
             if result.identical {
                 setSummary(result.onlyWhitespaceDiffers ? L10n.identicalExceptWhitespace : L10n.identical)
+                scrollSync.alignNow(drivenBy: left)
             } else {
                 setSummary(L10n.summary(removed: result.leftChanged.count,
                                         added: result.rightChanged.count,
+                                        movedBlocks: result.movedPairs.count,
                                         hunks: result.hunkAnchors.count))
-                nextDifference(nil)
+                // Jump to the first difference, but keep the counts visible.
+                currentHunk = 0
+                scrollToCurrentHunk(updateSummary: false)
             }
         }
     }
@@ -269,10 +322,24 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     }
 
     private func showCurrentHunk() {
+        scrollToCurrentHunk(updateSummary: true)
+    }
+
+    private func scrollToCurrentHunk(updateSummary: Bool) {
         let anchor = hunkAnchors[currentHunk]
-        left.scrollToLine(anchor.left)
-        right.scrollToLine(anchor.right)
-        setSummary(L10n.differencePosition(currentHunk + 1, of: hunkAnchors.count))
+        // For a moved block, show the counterpart location on the right so
+        // old and new position sit side by side.
+        var rightLine = anchor.right
+        if let pair = movedPairs.first(where: { $0.left.contains(anchor.left) }) {
+            rightLine = pair.right.lowerBound
+        }
+        scrollSync.performWithoutSync {
+            left.scrollToLine(anchor.left)
+            right.scrollToLine(rightLine)
+        }
+        if updateSummary {
+            setSummary(L10n.differencePosition(currentHunk + 1, of: hunkAnchors.count))
+        }
     }
 
     @objc func swapTexts(_ sender: Any?) {

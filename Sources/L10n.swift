@@ -41,6 +41,13 @@ enum L10n {
     static var rightTitle: String { t("Tekst 2 — nieuw", "Text 2 — new") }
     static var leftLegend: String { t("rood = verwijderd/gewijzigd", "red = removed/changed") }
     static var rightLegend: String { t("groen = toegevoegd/gewijzigd", "green = added/changed") }
+    static var movedLegend: String { t("oranje = verplaatst", "orange = moved") }
+
+    static var scrollTogether: String { t("Scroll samen", "Scroll together") }
+    static var scrollTogetherTooltip: String {
+        t("Beide panelen scrollen samen zodat overeenkomende regels naast elkaar blijven.",
+          "Both panes scroll together so matching lines stay side by side.")
+    }
     static var leftPlaceholder: String { t("Plak hier de originele tekst (⌘V)", "Paste the original text here (⌘V)") }
     static var rightPlaceholder: String { t("Plak hier de nieuwe tekst (⌘V)", "Paste the new text here (⌘V)") }
 
@@ -61,9 +68,14 @@ enum L10n {
     static var identical: String { t("Geen verschillen — de teksten zijn identiek.",
                                      "No differences — the texts are identical.") }
 
-    static func summary(removed: Int, added: Int, hunks: Int) -> String {
-        t("\(hunks) verschil\(hunks == 1 ? "" : "len"): \(removed) regel(s) rood links, \(added) regel(s) groen rechts.",
-          "\(hunks) difference\(hunks == 1 ? "" : "s"): \(removed) line(s) red on the left, \(added) line(s) green on the right.")
+    static func summary(removed: Int, added: Int, movedBlocks: Int, hunks: Int) -> String {
+        var text = t("\(hunks) verschil\(hunks == 1 ? "" : "len"): \(removed) regel(s) rood links, \(added) regel(s) groen rechts",
+                     "\(hunks) difference\(hunks == 1 ? "" : "s"): \(removed) line(s) red on the left, \(added) line(s) green on the right")
+        if movedBlocks > 0 {
+            text += t(", \(movedBlocks) blok\(movedBlocks == 1 ? "" : "ken") verplaatst",
+                      ", \(movedBlocks) block\(movedBlocks == 1 ? "" : "s") moved")
+        }
+        return text + "."
     }
 
     static func differencePosition(_ index: Int, of total: Int) -> String {

@@ -64,7 +64,7 @@ final class LineNumberSidebar: NSView {
         needsDisplay = true
     }
 
-    private func lineIndex(forCharacter location: Int) -> Int {
+    func lineIndex(forCharacter location: Int) -> Int {
         var low = 0, high = lineStarts.count - 1
         while low < high {
             let mid = (low + high + 1) / 2

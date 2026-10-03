@@ -8,6 +8,18 @@ struct DiffOptions: Sendable, Equatable {
     var ignoreWhitespace: Bool = false
     /// Lines that are empty after trimming never count as differences.
     var ignoreBlankLines: Bool = false
+    /// Detect blocks that occur unchanged in both texts at different
+    /// positions and classify them as moved instead of removed+added.
+    var detectMoves: Bool = true
+}
+
+/// A block of lines present in both texts at different positions. Ranges are
+/// over ORIGINAL line indices (half-open). With ignoreBlankLines a range may
+/// span skipped blank lines; leftMoved/rightMoved hold the exact matched
+/// lines and are what the UI colors.
+struct MovedBlock: Sendable, Equatable {
+    var left: Range<Int>
+    var right: Range<Int>
 }
 
 /// Result of a line-based comparison. Line indices are 0-based and always
@@ -24,11 +36,18 @@ struct DiffResult: Sendable {
     /// One anchor per contiguous block of differences, for navigation.
     /// (line in left text, line in right text)
     var hunkAnchors: [(left: Int, right: Int)] = []
+    /// Blocks present in both texts at different positions.
+    var movedPairs: [MovedBlock] = []
+    var leftMoved: Set<Int> = []
+    var rightMoved: Set<Int> = []
+    /// Every LCS-matched line pair (0-based original indices, strictly
+    /// ascending in both components). Basis for synchronized scrolling.
+    var matchedLines: [(left: Int, right: Int)] = []
     /// True when the texts are not byte-identical but show no differences
     /// under the active options (whitespace / blank lines only).
     var onlyWhitespaceDiffers: Bool = false
 
-    var identical: Bool { leftChanged.isEmpty && rightChanged.isEmpty }
+    var identical: Bool { leftChanged.isEmpty && rightChanged.isEmpty && movedPairs.isEmpty }
 }
 
 enum DiffEngine {
@@ -94,6 +113,13 @@ enum DiffEngine {
         // by blank lines merge into a single hunk — acceptable, navigation
         // still lands on the first changed line.
         var result = DiffResult()
+        result.matchedLines.reserveCapacity(min(a.keys.count, b.keys.count))
+        for i in 0..<prefix {
+            result.matchedLines.append((left: a.original(i), right: b.original(i)))
+        }
+        // Kept indices of single-sided changes; input for move detection.
+        var pureRemovedKept: [Int] = []
+        var pureInsertedKept: [Int] = []
         var ia = 0, ib = 0
         var inHunk = false
         while ia < aMid.count || ib < bMid.count {
@@ -102,6 +128,9 @@ enum DiffEngine {
 
             if !aChanged && !bChanged {
                 inHunk = false
+                if ia < aMid.count, ib < bMid.count {
+                    result.matchedLines.append((left: a.original(prefix + ia), right: b.original(prefix + ib)))
+                }
                 if ia < aMid.count { ia += 1 }
                 if ib < bMid.count { ib += 1 }
                 continue
@@ -126,11 +155,26 @@ enum DiffEngine {
                 ib += 1
             } else if aChanged {
                 result.leftChanged.insert(a.original(prefix + ia))
+                pureRemovedKept.append(prefix + ia)
                 ia += 1
             } else {
                 result.rightChanged.insert(b.original(prefix + ib))
+                pureInsertedKept.append(prefix + ib)
                 ib += 1
             }
+        }
+        for i in 0..<suffix {
+            result.matchedLines.append((
+                left: a.original(a.keys.count - suffix + i),
+                right: b.original(b.keys.count - suffix + i)
+            ))
+        }
+
+        if options.detectMoves {
+            detectMoves(a: a, b: b,
+                        pureRemovedKept: pureRemovedKept,
+                        pureInsertedKept: pureInsertedKept,
+                        result: &result)
         }
 
         if result.identical,
@@ -139,6 +183,97 @@ enum DiffEngine {
             result.onlyWhitespaceDiffers = true
         }
         return result
+    }
+
+    // MARK: - Move detection
+
+    /// Above this many pure removed+inserted lines, move detection is skipped.
+    private static let moveDetectionLimit = 50_000
+    /// Minimum normalized key length for a line to serve as a unique anchor.
+    private static let moveAnchorMinLength = 4
+    /// A single-line moved block must have at least this normalized length.
+    private static let moveSingleLineMinLength = 8
+
+    /// Patience-style move detection: a key that occurs exactly once among
+    /// the pure removals and once among the pure insertions anchors a block,
+    /// which is extended greedily while lines stay contiguous and equal.
+    /// Matched lines move from the changed sets into the moved sets.
+    private static func detectMoves(
+        a: Side, b: Side,
+        pureRemovedKept: [Int],
+        pureInsertedKept: [Int],
+        result: inout DiffResult
+    ) {
+        guard !pureRemovedKept.isEmpty, !pureInsertedKept.isEmpty,
+              pureRemovedKept.count + pureInsertedKept.count <= moveDetectionLimit else { return }
+
+        // key -> position in the pure arrays; -2 marks duplicate keys.
+        var removedPos: [String: Int] = [:]
+        removedPos.reserveCapacity(pureRemovedKept.count)
+        for (position, kept) in pureRemovedKept.enumerated() {
+            removedPos[a.keys[kept]] = removedPos[a.keys[kept]] == nil ? position : -2
+        }
+        var insertedPos: [String: Int] = [:]
+        insertedPos.reserveCapacity(pureInsertedKept.count)
+        for (position, kept) in pureInsertedKept.enumerated() {
+            insertedPos[b.keys[kept]] = insertedPos[b.keys[kept]] == nil ? position : -2
+        }
+
+        var removedClaimed = [Bool](repeating: false, count: pureRemovedKept.count)
+        var insertedClaimed = [Bool](repeating: false, count: pureInsertedKept.count)
+
+        for anchorR in pureRemovedKept.indices {
+            if removedClaimed[anchorR] { continue }
+            let key = a.keys[pureRemovedKept[anchorR]]
+            guard key.utf16.count >= moveAnchorMinLength,
+                  removedPos[key] == anchorR,
+                  let anchorI = insertedPos[key], anchorI >= 0,
+                  !insertedClaimed[anchorI] else { continue }
+
+            // Extend to a maximal run around the anchor. Contiguity is
+            // measured on kept indices, so skipped blank lines don't split
+            // a block.
+            var r0 = anchorR, i0 = anchorI
+            while r0 > 0, i0 > 0,
+                  !removedClaimed[r0 - 1], !insertedClaimed[i0 - 1],
+                  pureRemovedKept[r0 - 1] == pureRemovedKept[r0] - 1,
+                  pureInsertedKept[i0 - 1] == pureInsertedKept[i0] - 1,
+                  a.keys[pureRemovedKept[r0 - 1]] == b.keys[pureInsertedKept[i0 - 1]] {
+                r0 -= 1
+                i0 -= 1
+            }
+            var r1 = anchorR, i1 = anchorI
+            while r1 + 1 < pureRemovedKept.count, i1 + 1 < pureInsertedKept.count,
+                  !removedClaimed[r1 + 1], !insertedClaimed[i1 + 1],
+                  pureRemovedKept[r1 + 1] == pureRemovedKept[r1] + 1,
+                  pureInsertedKept[i1 + 1] == pureInsertedKept[i1] + 1,
+                  a.keys[pureRemovedKept[r1 + 1]] == b.keys[pureInsertedKept[i1 + 1]] {
+                r1 += 1
+                i1 += 1
+            }
+            for position in r0...r1 { removedClaimed[position] = true }
+            for position in i0...i1 { insertedClaimed[position] = true }
+
+            // Trivial blocks stay red/green. They also stay claimed, so they
+            // can't be glued onto a neighboring anchor across a mismatch.
+            if r1 == r0, key.utf16.count < moveSingleLineMinLength { continue }
+
+            result.movedPairs.append(MovedBlock(
+                left: a.original(pureRemovedKept[r0])..<(a.original(pureRemovedKept[r1]) + 1),
+                right: b.original(pureInsertedKept[i0])..<(b.original(pureInsertedKept[i1]) + 1)
+            ))
+            for position in r0...r1 {
+                let line = a.original(pureRemovedKept[position])
+                result.leftMoved.insert(line)
+                result.leftChanged.remove(line)
+            }
+            for position in i0...i1 {
+                let line = b.original(pureInsertedKept[position])
+                result.rightMoved.insert(line)
+                result.rightChanged.remove(line)
+            }
+        }
+        result.movedPairs.sort { $0.left.lowerBound < $1.left.lowerBound }
     }
 
     // MARK: - Preprocessing
