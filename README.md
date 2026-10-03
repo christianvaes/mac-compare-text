@@ -17,6 +17,12 @@ The UI is in Dutch or English, depending on your system language.
    compare again. Highlights disappear automatically as soon as you type or
    paste.
 
+By default the comparison **ignores whitespace and blank lines**: lines that
+only differ in indentation or spacing (e.g. a YAML block nested one level
+deeper) are not marked, and added/removed blank lines are skipped. Untick the
+**Ignore whitespace** checkbox in the bottom bar to compare strictly; the
+choice is remembered.
+
 Extras: **Swap** (⇧⌘T) exchanges both texts, **Clear** (⇧⌘K) empties
 everything, **⌘F** searches within a field, **⌘Z** is undo. The menu
 **Compare Text → About Compare Text** shows the version, build date and

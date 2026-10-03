@@ -44,6 +44,16 @@ enum L10n {
     static var leftPlaceholder: String { t("Plak hier de originele tekst (⌘V)", "Paste the original text here (⌘V)") }
     static var rightPlaceholder: String { t("Plak hier de nieuwe tekst (⌘V)", "Paste the new text here (⌘V)") }
 
+    static var ignoreWhitespace: String { t("Negeer witruimte", "Ignore whitespace") }
+    static var ignoreWhitespaceTooltip: String {
+        t("Verschillen in inspringing, spaties en lege regels worden genegeerd.",
+          "Differences in indentation, spaces and blank lines are ignored.")
+    }
+    static var identicalExceptWhitespace: String {
+        t("Geen inhoudelijke verschillen — alleen witruimte/lege regels verschillen.",
+          "No content differences — only whitespace/blank lines differ.")
+    }
+
     static var hintStart: String { t("Plak tekst in beide velden en klik op Vergelijk (↩ of ⌘↩).",
                                      "Paste text into both fields and click Compare (↩ or ⌘↩).") }
     static var hintEdited: String { t("Tekst gewijzigd — klik op Vergelijk voor een nieuwe vergelijking.",

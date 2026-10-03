@@ -37,6 +37,9 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     private let swapButton = NSButton(title: L10n.swapButton, target: nil, action: nil)
     private let previousButton = NSButton(title: "◀", target: nil, action: nil)
     private let nextButton = NSButton(title: "▶", target: nil, action: nil)
+    private let whitespaceCheckbox = NSButton(checkboxWithTitle: L10n.ignoreWhitespace, target: nil, action: nil)
+
+    private static let ignoreWhitespaceDefaultsKey = "ignoreWhitespace"
 
     private static let barHeight: CGFloat = 46
     private static let removedLineColor = NSColor.systemRed.withAlphaComponent(0.18)
@@ -47,6 +50,18 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     private var comparing = false
     private(set) var hunkAnchors: [(left: Int, right: Int)] = []
     private var currentHunk = -1
+
+    /// One toggle drives both options: whitespace and blank lines.
+    private(set) var ignoresWhitespace: Bool = {
+        let defaults = UserDefaults.standard
+        return defaults.object(forKey: MainWindowController.ignoreWhitespaceDefaultsKey) == nil
+            ? true
+            : defaults.bool(forKey: MainWindowController.ignoreWhitespaceDefaultsKey)
+    }()
+
+    private var diffOptions: DiffOptions {
+        DiffOptions(ignoreWhitespace: ignoresWhitespace, ignoreBlankLines: ignoresWhitespace)
+    }
 
     override init() {
         window = NSWindow(
@@ -82,7 +97,13 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         nextButton.toolTip = L10n.nextDifference + "  (⌘])"
         updateNavigationButtons()
 
+        whitespaceCheckbox.target = self
+        whitespaceCheckbox.action = #selector(toggleWhitespace(_:))
+        whitespaceCheckbox.toolTip = L10n.ignoreWhitespaceTooltip
+        whitespaceCheckbox.state = ignoresWhitespace ? .on : .off
+
         bar.addSubview(summaryLabel)
+        bar.addSubview(whitespaceCheckbox)
         bar.addSubview(previousButton)
         bar.addSubview(nextButton)
         bar.addSubview(swapButton)
@@ -137,12 +158,12 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         splitView.frame = NSRect(x: 0, y: Self.barHeight,
                                  width: bounds.width, height: bounds.height - Self.barHeight)
 
-        for button in [compareButton, clearButton, swapButton, previousButton, nextButton] {
+        for button in [compareButton, clearButton, swapButton, previousButton, nextButton, whitespaceCheckbox] {
             button.sizeToFit()
         }
         let buttonY = (Self.barHeight - compareButton.frame.height) / 2
         var x = bounds.width - 12
-        for button in [compareButton, clearButton, swapButton, nextButton, previousButton] {
+        for button in [compareButton, clearButton, swapButton, nextButton, previousButton, whitespaceCheckbox] {
             x -= button.frame.width
             button.frame.origin = NSPoint(x: x, y: buttonY)
             x -= 8
@@ -156,6 +177,22 @@ final class MainWindowController: NSObject, NSWindowDelegate {
 
     private func setSummary(_ text: String) {
         summaryLabel.stringValue = text
+    }
+
+    /// Exposed for the self-test harness.
+    var summaryText: String { summaryLabel.stringValue }
+
+    func setIgnoresWhitespace(_ on: Bool) {
+        ignoresWhitespace = on
+        whitespaceCheckbox.state = on ? .on : .off
+        UserDefaults.standard.set(on, forKey: Self.ignoreWhitespaceDefaultsKey)
+    }
+
+    @objc private func toggleWhitespace(_ sender: Any?) {
+        setIgnoresWhitespace(whitespaceCheckbox.state == .on)
+        if !left.text.isEmpty || !right.text.isEmpty {
+            compareNow()
+        }
     }
 
     private func textsEdited() {
@@ -184,12 +221,13 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         let rightText = right.text
         let leftGeneration = left.generation
         let rightGeneration = right.generation
+        let options = diffOptions
 
         comparing = true
         compareButton.isEnabled = false
         Task {
             let result = await Task.detached(priority: .userInitiated) {
-                DiffEngine.compare(left: leftText, right: rightText)
+                DiffEngine.compare(left: leftText, right: rightText, options: options)
             }.value
 
             comparing = false
@@ -208,7 +246,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
             updateNavigationButtons()
 
             if result.identical {
-                setSummary(L10n.identical)
+                setSummary(result.onlyWhitespaceDiffers ? L10n.identicalExceptWhitespace : L10n.identical)
             } else {
                 setSummary(L10n.summary(removed: result.leftChanged.count,
                                         added: result.rightChanged.count,
