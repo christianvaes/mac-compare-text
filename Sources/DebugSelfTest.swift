@@ -155,8 +155,66 @@ enum DebugSelfTest {
             controller.compareNow {
                 check("strict: differences shown", !controller.hunkAnchors.isEmpty)
                 controller.setIgnoresWhitespace(true)
-                bigTextStage(controller: controller)
+                movedStage(controller: controller)
             }
+        }
+    }
+
+    private static func movedStage(controller: MainWindowController) {
+        // 7c. Moved block: orange in both panes, counted in the summary,
+        // connecting line drawn by the overlay (verified visually via the
+        // rendered PNGs).
+        controller.left.setText("verplaats blok regel 1\nverplaats blok regel 2\nvaste regel hier\nvaste regel twee\nvaste regel drie")
+        controller.right.setText("vaste regel hier\nvaste regel twee\nvaste regel drie\nverplaats blok regel 1\nverplaats blok regel 2")
+        controller.compareNow {
+            check("moved: one pair", controller.movedPairs.count == 1)
+            check("moved: highlighted in both panes",
+                  highlightedLines(controller.left) == [0, 1] && highlightedLines(controller.right) == [3, 4])
+            check("moved: no strong inline", strongHighlightRanges(controller.left).isEmpty)
+            check("moved: summary mentions it", controller.summaryText.contains("verplaatst") || controller.summaryText.contains("moved"))
+            renderWindow(controller.window, suffix: "moved")
+            scrollSyncStage(controller: controller)
+        }
+    }
+
+    private static func scrollSyncStage(controller: MainWindowController) {
+        // 7d. Synchronized scrolling: left 400 lines; right has 200 extra
+        // lines inserted after line 99, so left line i>=100 maps to i+200.
+        let leftLines = (0..<400).map { "sync regel \($0)" }
+        var rightLines = Array(leftLines[0..<100])
+        rightLines += (0..<200).map { "extra regel \($0)" }
+        rightLines += leftLines[100...]
+        controller.left.setText(leftLines.joined(separator: "\n"))
+        controller.right.setText(rightLines.joined(separator: "\n"))
+        controller.setScrollTogether(true)
+        controller.compareNow {
+            controller.left.scroll(toVerticalPosition: 300)
+            var rightPosition = controller.right.topVerticalPosition() ?? -1
+            check("sync: right follows mapped position", abs(rightPosition - 500) <= 1.5)
+
+            controller.left.scroll(toVerticalPosition: 0)
+            rightPosition = controller.right.topVerticalPosition() ?? -1
+            check("sync: back to top", rightPosition <= 1.5)
+
+            // Toggle off: the other pane stays put.
+            controller.setScrollTogether(false)
+            controller.left.scroll(toVerticalPosition: 200)
+            rightPosition = controller.right.topVerticalPosition() ?? -1
+            check("sync off: right stays", rightPosition <= 1.5)
+
+            // Toggle on re-aligns immediately.
+            controller.setScrollTogether(true)
+            rightPosition = controller.right.topVerticalPosition() ?? -1
+            check("sync on: re-aligned", abs(rightPosition - 400) <= 1.5)
+
+            // Edit deactivates sync until the next compare.
+            controller.right.textView.insertText("X", replacementRange: NSRange(location: 0, length: 0))
+            let before = controller.right.scrollView.documentVisibleRect.origin.y
+            controller.left.scroll(toVerticalPosition: 50)
+            let after = controller.right.scrollView.documentVisibleRect.origin.y
+            check("sync: inactive after edit", abs(before - after) < 0.5)
+
+            bigTextStage(controller: controller)
         }
     }
 
@@ -243,6 +301,15 @@ enum DebugSelfTest {
                 index = found.location + 1
             }
             lines.insert(line)
+            // Adjacent same-color ranges merge; count every covered line
+            // (the range's own trailing newline doesn't start a new one).
+            if range.length > 1 {
+                let interior = ns.substring(with: NSRange(location: range.location, length: range.length - 1))
+                for scalar in interior.unicodeScalars where scalar == "\n" {
+                    line += 1
+                    lines.insert(line)
+                }
+            }
         }
         return lines
     }

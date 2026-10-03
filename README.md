@@ -23,6 +23,14 @@ deeper) are not marked, and added/removed blank lines are skipped. Untick the
 **Ignore whitespace** checkbox in the bottom bar to compare strictly; the
 choice is remembered.
 
+**Moved blocks** (text present in both versions at a different position) are
+shown in **orange** in both panes instead of red+green, with a connector line
+between the old and the new location and their own count in the summary.
+
+With **Scroll together** enabled (the default), both panes scroll in sync
+after a comparison, aligned on matching lines — texts of different lengths
+stay side by side. Editing a text pauses the sync until the next comparison.
+
 Extras: **Swap** (⇧⌘T) exchanges both texts, **Clear** (⇧⌘K) empties
 everything, **⌘F** searches within a field, **⌘Z** is undo. The menu
 **Compare Text → About Compare Text** shows the version, build date and
@@ -81,7 +89,9 @@ open build/CompareText.app --env COMPARETEXT_SELFTEST=1 --stdout /tmp/selftest.l
 | `Sources/MainWindowController.swift` | Window, button bar, actions (compare/navigate/swap) |
 | `Sources/PaneController.swift` | One text pane: header, line numbers, placeholder, highlights |
 | `Sources/LineNumberSidebar.swift` | Line-number sidebar based on TextKit 2 layout positions |
-| `Sources/DiffEngine.swift` | Line- and word-level diff (pure, unit-tested) |
+| `Sources/DiffEngine.swift` | Line- and word-level diff, moved-block detection (pure, unit-tested) |
+| `Sources/ScrollSyncCoordinator.swift` | Anchor-based synchronized scrolling between the panes |
+| `Sources/MovedLinksOverlay.swift` | Connector lines between old and new location of moved blocks |
 | `Sources/L10n.swift` | Dutch/English |
 | `Sources/DebugSelfTest.swift` | End-to-end test suite (only active with `COMPARETEXT_SELFTEST=1`) |
 

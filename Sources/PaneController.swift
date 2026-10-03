@@ -178,12 +178,21 @@ final class PaneController: NSObject, NSTextViewDelegate {
     }
 
     /// Line-level color for every changed line, stronger inline color for the
-    /// character ranges that differ within paired lines.
-    func applyHighlights(lines: Set<Int>, inline: [Int: [NSRange]], lineColor: NSColor, inlineColor: NSColor) {
+    /// character ranges that differ within paired lines; moved lines get only
+    /// a line-level color (they are identical content by definition).
+    func applyHighlights(lines: Set<Int>, inline: [Int: [NSRange]], lineColor: NSColor, inlineColor: NSColor,
+                         movedLines: Set<Int> = [], movedColor: NSColor? = nil) {
         guard let storage = textView.textStorage else { return }
         storage.beginEditing()
         if storage.length > 0 {
             storage.removeAttribute(.backgroundColor, range: NSRange(location: 0, length: storage.length))
+        }
+        if let movedColor {
+            for line in movedLines {
+                if let range = sidebar.characterRange(ofLine: line), range.length > 0 {
+                    storage.addAttribute(.backgroundColor, value: movedColor, range: range)
+                }
+            }
         }
         for line in lines {
             guard let lineRange = sidebar.characterRange(ofLine: line) else { continue }
@@ -206,5 +215,68 @@ final class PaneController: NSObject, NSTextViewDelegate {
         guard let range = sidebar.characterRange(ofLine: line) else { return }
         textView.scrollRangeToVisible(NSRange(location: range.location, length: 0))
         sidebar.needsDisplay = true
+    }
+
+    // MARK: - Position mapping (synchronized scrolling, moved-block links)
+
+    /// Logical position (0-based line + fraction within it) at the top of
+    /// the visible viewport. nil when layout cannot resolve it (empty doc).
+    func topVerticalPosition() -> Double? {
+        guard let layoutManager = textView.textLayoutManager,
+              let contentStorage = layoutManager.textContentManager as? NSTextContentStorage else { return nil }
+        let visibleY = scrollView.documentVisibleRect.origin.y
+        let yInText = max(0, visibleY - textView.textContainerInset.height)
+        guard let fragment = layoutManager.textLayoutFragment(for: CGPoint(x: 0, y: yInText)) else { return nil }
+        let offset = contentStorage.offset(from: contentStorage.documentRange.location,
+                                           to: fragment.rangeInElement.location)
+        let line = sidebar.lineIndex(forCharacter: offset)
+        let frame = fragment.layoutFragmentFrame
+        let fraction = frame.height > 0 ? Double((yInText - frame.minY) / frame.height) : 0
+        return Double(line) + max(0, min(1, fraction))
+    }
+
+    /// Scrolls so the given logical position sits at the top of the viewport,
+    /// clamped to the document. Only this pane moves; callers guard loops.
+    func scroll(toVerticalPosition position: Double) {
+        guard sidebar.lineCount > 0 else { return }
+        let line = min(max(0, Int(position)), sidebar.lineCount - 1)
+        let fraction = CGFloat(min(max(position - Double(line), 0), 1))
+
+        var targetY = textView.frame.height
+        if let frame = layoutFragmentFrame(ofLine: line) {
+            targetY = frame.minY + fraction * frame.height + textView.textContainerInset.height
+        }
+        let clipHeight = scrollView.contentView.bounds.height
+        let maxY = max(0, (scrollView.documentView?.frame.height ?? 0) - clipHeight)
+        targetY = min(max(0, targetY), maxY)
+        let currentX = scrollView.documentVisibleRect.origin.x
+        scrollView.contentView.scroll(to: NSPoint(x: currentX, y: targetY))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+
+    /// Y of the top of a line, measured from the top of the visible viewport
+    /// (negative or beyond the viewport height when scrolled out of view).
+    func viewportY(forLine line: Int) -> CGFloat {
+        let visibleY = scrollView.documentVisibleRect.origin.y
+        guard let frame = layoutFragmentFrame(ofLine: line) else {
+            return textView.frame.height - visibleY
+        }
+        return frame.minY + textView.textContainerInset.height - visibleY
+    }
+
+    /// Lays out (at most) one fragment to resolve the frame of a line.
+    /// nil for the trailing empty line after a final newline.
+    private func layoutFragmentFrame(ofLine line: Int) -> CGRect? {
+        guard let range = sidebar.characterRange(ofLine: line),
+              let layoutManager = textView.textLayoutManager,
+              let contentStorage = layoutManager.textContentManager as? NSTextContentStorage,
+              let location = contentStorage.location(contentStorage.documentRange.location,
+                                                     offsetBy: range.location) else { return nil }
+        var frame: CGRect?
+        layoutManager.enumerateTextLayoutFragments(from: location, options: [.ensuresLayout]) { fragment in
+            frame = fragment.layoutFragmentFrame
+            return false
+        }
+        return frame
     }
 }
