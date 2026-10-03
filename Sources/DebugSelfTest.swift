@@ -35,6 +35,7 @@ enum DebugSelfTest {
         check("menu has edit + compare", (NSApp.mainMenu?.items.count ?? 0) >= 3)
         check("editable", left.textView.isEditable && right.textView.isEditable)
         check("window visible", window.isVisible)
+        check("panes equal width", abs(left.box.frame.width - right.box.frame.width) <= 1)
 
         // 2. Cross-app paste into the left pane (pasteboard set by the test runner).
         window.makeFirstResponder(left.textView)

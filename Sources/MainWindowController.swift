@@ -150,7 +150,9 @@ final class MainWindowController: NSObject, NSWindowDelegate {
 
         window.contentView = root
         layoutRoot()
-        splitView.setPosition(root.bounds.width / 2, ofDividerAt: 0)
+        // The divider position is the left pane's width; subtract the gutter
+        // so both panes end up equally wide.
+        splitView.setPosition((root.bounds.width - GutterSplitView.gutterWidth) / 2, ofDividerAt: 0)
 
         left.onEdit = { [weak self] in self?.textsEdited() }
         right.onEdit = { [weak self] in self?.textsEdited() }
