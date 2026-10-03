@@ -21,6 +21,11 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         override func drawDivider(in rect: NSRect) {
             NSColor.windowBackgroundColor.setFill()
             rect.fill()
+            // Hairlines on both edges so the gutter reads as its own column
+            // instead of an extension of the left pane.
+            NSColor.separatorColor.setFill()
+            NSRect(x: rect.minX, y: rect.minY, width: 1, height: rect.height).fill()
+            NSRect(x: rect.maxX - 1, y: rect.minY, width: 1, height: rect.height).fill()
         }
     }
 
