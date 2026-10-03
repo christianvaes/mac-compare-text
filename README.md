@@ -6,12 +6,12 @@ The UI is in Dutch or English, depending on your system language.
 ## Usage
 
 1. Paste text into the left field (original) and the right field (new).
-2. Click **Compare** (or press **↩** / **⌘↩**).
+2. Click **Compare** in the toolbar (or press **⌘↩**).
 3. Differences are highlighted per line, with extra emphasis on the words
    that differ within a line (WinMerge-style):
    - **red** (left) = line removed or changed
    - **green** (right) = line added or changed
-4. Navigate through the differences with **◀ ▶** (or **⌘[** / **⌘]**);
+4. Navigate through the differences with the **chevrons** in the toolbar (or **⌘[** / **⌘]**);
    both sides scroll to the difference automatically.
 5. For a new comparison: select all (**⌘A**), paste the new text over it and
    compare again. Highlights disappear automatically as soon as you type or
@@ -20,7 +20,7 @@ The UI is in Dutch or English, depending on your system language.
 By default the comparison **ignores whitespace and blank lines**: lines that
 only differ in indentation or spacing (e.g. a YAML block nested one level
 deeper) are not marked, and added/removed blank lines are skipped. Untick the
-**Ignore whitespace** checkbox in the bottom bar to compare strictly; the
+**Ignore whitespace** option (toolbar options menu or the Comparison menu) to compare strictly; the
 choice is remembered.
 
 **Moved blocks** (text present in both versions at a different position) are
@@ -30,6 +30,8 @@ between the old and the new location and their own count in the summary.
 With **Scroll together** enabled (the default), both panes scroll in sync
 after a comparison, aligned on matching lines — texts of different lengths
 stay side by side. Editing a text pauses the sync until the next comparison.
+
+The status bar shows a color legend with line counts after each comparison.
 
 Extras: **Swap** (⇧⌘T) exchanges both texts, **Clear** (⇧⌘K) empties
 everything, **⌘F** searches within a field, **⌘Z** is undo. The menu

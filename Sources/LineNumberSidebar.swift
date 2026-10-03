@@ -80,12 +80,10 @@ final class LineNumberSidebar: NSView {
 
         (textView.backgroundColor).setFill()
         dirtyRect.fill()
-        NSColor.separatorColor.setFill()
-        NSRect(x: bounds.maxX - 1, y: dirtyRect.minY, width: 1, height: dirtyRect.height).fill()
 
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .regular),
-            .foregroundColor: NSColor.secondaryLabelColor,
+            .foregroundColor: NSColor.tertiaryLabelColor,
         ]
 
         let visible = scrollView.documentVisibleRect

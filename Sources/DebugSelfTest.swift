@@ -37,6 +37,15 @@ enum DebugSelfTest {
         check("window visible", window.isVisible)
         check("panes equal width", abs(left.box.frame.width - right.box.frame.width) <= 1)
 
+        // Toolbar: visible, all items present, every symbol resolves.
+        let toolbarItems = window.toolbar?.items ?? []
+        let named = toolbarItems.filter { $0.itemIdentifier.rawValue != "NSToolbarFlexibleSpaceItem"
+            && $0.itemIdentifier.rawValue != "NSToolbarSpaceItem" }
+        check("toolbar visible", window.toolbar?.isVisible == true)
+        check("toolbar has 6 items", named.count == 6)
+        check("toolbar symbols resolve", named.allSatisfy { $0.image != nil || $0.view != nil })
+        out += "toolbar items: \(named.map(\.itemIdentifier.rawValue))\n"
+
         // 2. Cross-app paste into the left pane (pasteboard set by the test runner).
         window.makeFirstResponder(left.textView)
         left.textView.paste(nil)
@@ -173,6 +182,7 @@ enum DebugSelfTest {
                   highlightedLines(controller.left) == [0, 1] && highlightedLines(controller.right) == [3, 4])
             check("moved: no strong inline", strongHighlightRanges(controller.left).isEmpty)
             check("moved: summary mentions it", controller.summaryText.contains("verplaatst") || controller.summaryText.contains("moved"))
+            check("moved: legend counts", controller.legendCounts?.moved == 2)
             renderWindow(controller.window, suffix: "moved")
             demoStage(controller: controller)
         }
@@ -196,7 +206,20 @@ enum DebugSelfTest {
         controller.compareNow {
             out += "demo movedPairs=\(controller.movedPairs.count)\n"
             renderWindow(controller.window, suffix: "demo")
+            renderFullWindow(controller.window, suffix: "demo-full")
             scrollSyncStage(controller: controller)
+        }
+    }
+
+    /// Renders the whole window frame including titlebar and toolbar.
+    private static func renderFullWindow(_ window: NSWindow, suffix: String) {
+        guard let frameView = window.contentView?.superview,
+              let rep = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds) else { return }
+        frameView.cacheDisplay(in: frameView.bounds, to: rep)
+        if let png = rep.representation(using: .png, properties: [:]) {
+            let path = NSTemporaryDirectory() + "comparetext-\(suffix).png"
+            try? png.write(to: URL(fileURLWithPath: path))
+            out += "render \(suffix): \(path)\n"
         }
     }
 

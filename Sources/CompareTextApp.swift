@@ -188,6 +188,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                action: #selector(MainWindowController.clearAll(_:)), keyEquivalent: "k")
         clear.keyEquivalentModifierMask = [.command, .shift]
         compare.addItem(clear)
+        compare.addItem(.separator())
+        compare.addItem(withTitle: L10n.ignoreWhitespace,
+                        action: #selector(MainWindowController.toggleWhitespace(_:)), keyEquivalent: "")
+        compare.addItem(withTitle: L10n.scrollTogether,
+                        action: #selector(MainWindowController.toggleScrollTogether(_:)), keyEquivalent: "")
         compareItem.submenu = compare
 
         // The window controller is not in the responder chain; target it
