@@ -58,9 +58,10 @@ final class MovedLinksOverlay: NSView {
         var clampedTo: Int
     }
 
-    private func blockEdge(pane: PaneController, frame: CGRect, lines: Range<Int>) -> BlockEdge {
-        let contentTop = frame.minY + PaneController.headerHeight
-        let contentBottom = frame.maxY
+    private func blockEdge(pane: PaneController, lines: Range<Int>) -> BlockEdge {
+        let content = convert(pane.scrollView.bounds, from: pane.scrollView)
+        let contentTop = content.minY
+        let contentBottom = content.maxY
         let rawTop = contentTop + pane.viewportY(forLine: lines.lowerBound)
         let rawBottom = contentTop + pane.viewportY(forLine: lines.upperBound)
         var clamped = 0
@@ -79,18 +80,17 @@ final class MovedLinksOverlay: NSView {
               left.generation == generations.left,
               right.generation == generations.right else { return }
 
-        let leftFrame = convert(left.box.bounds, from: left.box)
-        let rightFrame = convert(right.box.bounds, from: right.box)
-        let gutterLeft = leftFrame.maxX
-        let gutterRight = rightFrame.minX
+        // Ribbons run between the facing edges of the two cards.
+        let gutterLeft = convert(left.card.bounds, from: left.card).maxX
+        let gutterRight = convert(right.card.bounds, from: right.card).minX
         let midX = (gutterLeft + gutterRight) / 2
 
-        let fill = NSColor.systemOrange.withAlphaComponent(0.15)
-        let stroke = NSColor.systemOrange.withAlphaComponent(0.6)
+        let fill = NSColor.systemOrange.withAlphaComponent(0.2)
+        let stroke = NSColor.systemOrange.withAlphaComponent(0.55)
 
         for pair in pairs.prefix(Self.maxLinks) {
-            let leftEdge = blockEdge(pane: left, frame: leftFrame, lines: pair.left)
-            let rightEdge = blockEdge(pane: right, frame: rightFrame, lines: pair.right)
+            let leftEdge = blockEdge(pane: left, lines: pair.left)
+            let rightEdge = blockEdge(pane: right, lines: pair.right)
             // Both blocks scrolled past the same edge: nothing to connect.
             if leftEdge.clampedTo != 0, leftEdge.clampedTo == rightEdge.clampedTo { continue }
 

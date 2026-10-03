@@ -34,14 +34,17 @@ enum L10n {
     static var previousDifference: String { t("Vorig verschil", "Previous Difference") }
     static var swapTexts: String { t("Wissel teksten", "Swap Texts") }
     static var clearAll: String { t("Maak beide velden leeg", "Clear Both Fields") }
-    static var clearButton: String { t("Leegmaken", "Clear") }
-    static var swapButton: String { t("Wissel", "Swap") }
 
-    static var leftTitle: String { t("Tekst 1 — origineel", "Text 1 — original") }
-    static var rightTitle: String { t("Tekst 2 — nieuw", "Text 2 — new") }
-    static var leftLegend: String { t("rood = verwijderd/gewijzigd", "red = removed/changed") }
-    static var rightLegend: String { t("groen = toegevoegd/gewijzigd", "green = added/changed") }
-    static var movedLegend: String { t("oranje = verplaatst", "orange = moved") }
+    static var leftTitle: String { t("Origineel", "Original") }
+    static var rightTitle: String { t("Nieuw", "New") }
+    static var legendRemoved: String { t("verwijderd", "removed") }
+    static var legendAdded: String { t("toegevoegd", "added") }
+    static var legendMoved: String { t("verplaatst", "moved") }
+    static var options: String { t("Opties", "Options") }
+
+    static func lineCount(_ count: Int) -> String {
+        t("\(count) regel\(count == 1 ? "" : "s")", "\(count) line\(count == 1 ? "" : "s")")
+    }
 
     static var scrollTogether: String { t("Scroll samen", "Scroll together") }
     static var scrollTogetherTooltip: String {
@@ -61,21 +64,21 @@ enum L10n {
           "No content differences — only whitespace/blank lines differ.")
     }
 
-    static var hintStart: String { t("Plak tekst in beide velden en klik op Vergelijk (↩ of ⌘↩).",
-                                     "Paste text into both fields and click Compare (↩ or ⌘↩).") }
+    static var hintStart: String { t("Plak tekst in beide velden en druk op ⌘↩ om te vergelijken.",
+                                     "Paste text into both fields and press ⌘↩ to compare.") }
     static var hintEdited: String { t("Tekst gewijzigd — klik op Vergelijk voor een nieuwe vergelijking.",
                                       "Text changed — click Compare to compare again.") }
     static var identical: String { t("Geen verschillen — de teksten zijn identiek.",
                                      "No differences — the texts are identical.") }
 
-    static func summary(removed: Int, added: Int, movedBlocks: Int, hunks: Int) -> String {
-        var text = t("\(hunks) verschil\(hunks == 1 ? "" : "len"): \(removed) regel(s) rood links, \(added) regel(s) groen rechts",
-                     "\(hunks) difference\(hunks == 1 ? "" : "s"): \(removed) line(s) red on the left, \(added) line(s) green on the right")
+    static func summary(movedBlocks: Int, hunks: Int) -> String {
+        var text = t("\(hunks) verschil\(hunks == 1 ? "" : "len") gevonden",
+                     "\(hunks) difference\(hunks == 1 ? "" : "s") found")
         if movedBlocks > 0 {
-            text += t(", \(movedBlocks) blok\(movedBlocks == 1 ? "" : "ken") verplaatst",
+            text += t(", waarvan \(movedBlocks) blok\(movedBlocks == 1 ? "" : "ken") verplaatst",
                       ", \(movedBlocks) block\(movedBlocks == 1 ? "" : "s") moved")
         }
-        return text + "."
+        return text + t(" — ⌘] voor het volgende.", " — ⌘] for the next one.")
     }
 
     static func differencePosition(_ index: Int, of total: Int) -> String {

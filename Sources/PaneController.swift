@@ -23,27 +23,67 @@ final class PaneController: NSObject, NSTextViewDelegate {
         }
     }
 
-    /// Header strip above the text area; draws its own background, hairline
-    /// and title.
+    /// Caption above the card: title on the left, line count on the right.
     final class HeaderView: NSView {
         var title: String = ""
+        var detail: String = "" { didSet { needsDisplay = true } }
 
         override var isFlipped: Bool { true }
 
         override func draw(_ dirtyRect: NSRect) {
             NSColor.windowBackgroundColor.setFill()
             bounds.fill()
-            NSColor.separatorColor.setFill()
-            NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
 
-            let attributes: [NSAttributedString.Key: Any] = [
+            let titleAttributes: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
                 .foregroundColor: NSColor.secondaryLabelColor,
             ]
-            let label = title as NSString
-            let size = label.size(withAttributes: attributes)
-            label.draw(at: NSPoint(x: 10, y: (bounds.height - size.height) / 2),
-                       withAttributes: attributes)
+            let titleSize = (title as NSString).size(withAttributes: titleAttributes)
+            (title as NSString).draw(at: NSPoint(x: 4, y: (bounds.height - titleSize.height) / 2 + 2),
+                                     withAttributes: titleAttributes)
+
+            guard !detail.isEmpty else { return }
+            let detailAttributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 11),
+                .foregroundColor: NSColor.tertiaryLabelColor,
+            ]
+            let detailSize = (detail as NSString).size(withAttributes: detailAttributes)
+            (detail as NSString).draw(
+                at: NSPoint(x: bounds.width - detailSize.width - 4,
+                            y: (bounds.height - detailSize.height) / 2 + 2),
+                withAttributes: detailAttributes
+            )
+        }
+    }
+
+    /// Rounded, bordered surface that holds the line numbers and the text.
+    final class CardView: NSView {
+        static let cornerRadius: CGFloat = 9
+
+        override init(frame frameRect: NSRect) {
+            super.init(frame: frameRect)
+            wantsLayer = true
+            layer?.cornerRadius = Self.cornerRadius
+            layer?.cornerCurve = .continuous
+            layer?.masksToBounds = true
+            layer?.borderWidth = 1
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+        override var wantsUpdateLayer: Bool { true }
+
+        // Dynamic colors resolve against the current appearance here, so the
+        // card follows light/dark switches.
+        override func updateLayer() {
+            layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
+            layer?.borderColor = NSColor.separatorColor.cgColor
+        }
+
+        override func viewDidChangeEffectiveAppearance() {
+            super.viewDidChangeEffectiveAppearance()
+            needsDisplay = true
         }
     }
 
@@ -67,6 +107,9 @@ final class PaneController: NSObject, NSTextViewDelegate {
 
     let box = PaneBox()
     let header = HeaderView()
+    let card = CardView()
+    /// Margin between the card and the pane edges (window edge side).
+    var outerInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
     let scrollView: NSScrollView
     let textView: NSTextView
     let sidebar: LineNumberSidebar
@@ -108,11 +151,13 @@ final class PaneController: NSObject, NSTextViewDelegate {
         box.controller = self
         header.title = title
         placeholder.text = placeholderText
-        // The header must be the topmost subview: lower siblings sharing the
-        // pane's backing layer get overdrawn on macOS 26.
-        box.addSubview(sidebar)
-        box.addSubview(scrollView)
-        box.addSubview(placeholder)
+        // Draw-once views (header, placeholder) must be the topmost subview
+        // of their parent: lower siblings sharing a backing layer get
+        // overdrawn on macOS 26.
+        card.addSubview(sidebar)
+        card.addSubview(scrollView)
+        card.addSubview(placeholder)
+        box.addSubview(card)
         box.addSubview(header)
 
         sidebar.onThicknessChange = { [weak self] in self?.layoutBox() }
@@ -129,15 +174,24 @@ final class PaneController: NSObject, NSTextViewDelegate {
 
     func layoutBox() {
         let bounds = box.bounds
-        let contentHeight = max(0, bounds.height - Self.headerHeight)
+        let cardFrame = NSRect(
+            x: outerInsets.left,
+            y: outerInsets.bottom,
+            width: max(0, bounds.width - outerInsets.left - outerInsets.right),
+            height: max(0, bounds.height - Self.headerHeight - outerInsets.bottom)
+        )
+        card.frame = cardFrame
+        header.frame = NSRect(x: cardFrame.minX, y: cardFrame.maxY,
+                              width: cardFrame.width, height: Self.headerHeight)
+
+        let contentHeight = cardFrame.height
         let sidebarWidth = sidebar.desiredThickness
-        header.frame = NSRect(x: 0, y: contentHeight, width: bounds.width, height: Self.headerHeight)
         sidebar.frame = NSRect(x: 0, y: 0, width: sidebarWidth, height: contentHeight)
         scrollView.frame = NSRect(x: sidebarWidth, y: 0,
-                                  width: max(0, bounds.width - sidebarWidth),
+                                  width: max(0, cardFrame.width - sidebarWidth),
                                   height: contentHeight)
         placeholder.frame = NSRect(x: sidebarWidth, y: contentHeight - 30,
-                                   width: max(0, bounds.width - sidebarWidth), height: 30)
+                                   width: max(0, cardFrame.width - sidebarWidth), height: 30)
         sidebar.needsDisplay = true
         header.needsDisplay = true
     }
@@ -167,6 +221,7 @@ final class PaneController: NSObject, NSTextViewDelegate {
         sidebar.invalidateLineIndex()
         clearHighlights()
         placeholder.isHidden = !textView.string.isEmpty
+        header.detail = textView.string.isEmpty ? "" : L10n.lineCount(sidebar.lineCount)
         onEdit?()
     }
 

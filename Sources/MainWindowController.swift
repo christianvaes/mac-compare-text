@@ -1,11 +1,11 @@
 import AppKit
 
 /// Builds the main window and owns all user actions: compare, navigation
-/// between differences, swap and clear.
+/// between differences, swap, clear and the comparison options.
 @MainActor
-final class MainWindowController: NSObject, NSWindowDelegate {
+final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate, NSMenuItemValidation {
 
-    /// Root view: split view on top, button bar at the bottom.
+    /// Root view: split view on top, status bar at the bottom.
     final class RootView: NSView {
         var onLayout: (() -> Void)?
         override func resizeSubviews(withOldSize oldSize: NSSize) { onLayout?() }
@@ -21,49 +21,86 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         override func drawDivider(in rect: NSRect) {
             NSColor.windowBackgroundColor.setFill()
             rect.fill()
-            // Hairlines on both edges so the gutter reads as its own column
-            // instead of an extension of the left pane.
-            NSColor.separatorColor.setFill()
-            NSRect(x: rect.minX, y: rect.minY, width: 1, height: rect.height).fill()
-            NSRect(x: rect.maxX - 1, y: rect.minY, width: 1, height: rect.height).fill()
         }
     }
 
-    /// Bottom bar with its own background and hairline so it reads clearly
-    /// in both light and dark mode.
-    final class BarView: NSView {
+    /// Status bar: message on the left, color legend (with counts after a
+    /// comparison) on the right.
+    final class StatusBarView: NSView {
         override func draw(_ dirtyRect: NSRect) {
             NSColor.windowBackgroundColor.setFill()
             bounds.fill()
-            NSColor.separatorColor.setFill()
-            NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
         }
     }
 
+    /// Colored dots explaining the highlight colors; shows line counts once
+    /// a comparison has run.
+    final class LegendView: NSView {
+        var counts: (removed: Int, added: Int, moved: Int)? {
+            didSet { needsDisplay = true }
+        }
+
+        override var isFlipped: Bool { true }
+
+        override func draw(_ dirtyRect: NSRect) {
+            NSColor.windowBackgroundColor.setFill()
+            bounds.fill()
+
+            let entries: [(NSColor, String, Int?)] = [
+                (.systemRed, L10n.legendRemoved, counts?.removed),
+                (.systemGreen, L10n.legendAdded, counts?.added),
+                (.systemOrange, L10n.legendMoved, counts?.moved),
+            ]
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 11),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ]
+            let dot: CGFloat = 8
+            var x = bounds.width
+            for (color, label, count) in entries.reversed() {
+                let text = (count.map { "\($0) " } ?? "") + label
+                let size = (text as NSString).size(withAttributes: attributes)
+                x -= size.width
+                (text as NSString).draw(at: NSPoint(x: x, y: (bounds.height - size.height) / 2),
+                                        withAttributes: attributes)
+                x -= dot + 5
+                color.withAlphaComponent(0.85).setFill()
+                NSBezierPath(ovalIn: NSRect(x: x, y: (bounds.height - dot) / 2, width: dot, height: dot)).fill()
+                x -= 16
+            }
+        }
+    }
+
+    private enum ToolbarID {
+        static let toolbar = NSToolbar.Identifier("CompareTextToolbar")
+        static let previous = NSToolbarItem.Identifier("previous")
+        static let next = NSToolbarItem.Identifier("next")
+        static let swap = NSToolbarItem.Identifier("swap")
+        static let clear = NSToolbarItem.Identifier("clear")
+        static let options = NSToolbarItem.Identifier("options")
+        static let compare = NSToolbarItem.Identifier("compare")
+    }
+
     let window: NSWindow
-    let left = PaneController(title: "\(L10n.leftTitle)   —   \(L10n.leftLegend) · \(L10n.movedLegend)",
-                              placeholderText: L10n.leftPlaceholder)
-    let right = PaneController(title: "\(L10n.rightTitle)   —   \(L10n.rightLegend) · \(L10n.movedLegend)",
-                               placeholderText: L10n.rightPlaceholder)
+    let left = PaneController(title: L10n.leftTitle, placeholderText: L10n.leftPlaceholder)
+    let right = PaneController(title: L10n.rightTitle, placeholderText: L10n.rightPlaceholder)
     let scrollSync: ScrollSyncCoordinator
 
     private let root = RootView()
     private let splitView = GutterSplitView()
-    private let bar = BarView()
+    private let statusBar = StatusBarView()
     private let summaryLabel = NSTextField(labelWithString: L10n.hintStart)
+    private let legend = LegendView()
     private let compareButton = NSButton(title: L10n.compare, target: nil, action: nil)
-    private let clearButton = NSButton(title: L10n.clearButton, target: nil, action: nil)
-    private let swapButton = NSButton(title: L10n.swapButton, target: nil, action: nil)
-    private let previousButton = NSButton(title: "◀", target: nil, action: nil)
-    private let nextButton = NSButton(title: "▶", target: nil, action: nil)
-    private let whitespaceCheckbox = NSButton(checkboxWithTitle: L10n.ignoreWhitespace, target: nil, action: nil)
-    private let scrollTogetherCheckbox = NSButton(checkboxWithTitle: L10n.scrollTogether, target: nil, action: nil)
     private let movedOverlay = MovedLinksOverlay()
+    private var toolbarItems: [NSToolbarItem.Identifier: NSToolbarItem] = [:]
 
     private static let ignoreWhitespaceDefaultsKey = "ignoreWhitespace"
     private static let scrollTogetherDefaultsKey = "scrollTogether"
 
-    private static let barHeight: CGFloat = 46
+    private static let statusBarHeight: CGFloat = 30
+    /// Margin between the cards and the window edges.
+    private static let outerMargin: CGFloat = 12
     private static let removedLineColor = NSColor.systemRed.withAlphaComponent(0.18)
     private static let removedInlineColor = NSColor.systemRed.withAlphaComponent(0.42)
     private static let addedLineColor = NSColor.systemGreen.withAlphaComponent(0.18)
@@ -87,6 +124,9 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         DiffOptions(ignoreWhitespace: ignoresWhitespace, ignoreBlankLines: ignoresWhitespace)
     }
 
+    /// Exposed for the self-test harness.
+    var legendCounts: (removed: Int, added: Int, moved: Int)? { legend.counts }
+
     override init() {
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
@@ -106,48 +146,41 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         window.delegate = self
         window.center()
         window.tabbingMode = .disallowed
+        window.toolbarStyle = .unified
+        window.titlebarSeparatorStyle = .none
 
+        compareButton.target = self
+        compareButton.action = #selector(compare(_:))
+        compareButton.bezelStyle = .push
+        compareButton.bezelColor = .controlAccentColor
+        compareButton.keyEquivalent = "\r"
+        compareButton.toolTip = L10n.compare + "  (⌘↩)"
+
+        makeToolbarItems()
+        let toolbar = NSToolbar(identifier: ToolbarID.toolbar)
+        toolbar.delegate = self
+        toolbar.displayMode = .iconOnly
+        toolbar.allowsUserCustomization = false
+        toolbar.autosavesConfiguration = false
+        window.toolbar = toolbar
+        updateNavigationButtons()
+
+        left.outerInsets = NSEdgeInsets(top: 0, left: Self.outerMargin, bottom: 0, right: 0)
+        right.outerInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: Self.outerMargin)
         splitView.isVertical = true
         splitView.dividerStyle = .thin
         splitView.addArrangedSubview(left.box)
         splitView.addArrangedSubview(right.box)
 
-        summaryLabel.font = .systemFont(ofSize: 12)
+        summaryLabel.font = .systemFont(ofSize: 11)
         summaryLabel.textColor = .secondaryLabelColor
         summaryLabel.lineBreakMode = .byTruncatingTail
-
-        configure(compareButton, action: #selector(compare(_:)))
-        compareButton.keyEquivalent = "\r"
-
-        configure(clearButton, action: #selector(clearAll(_:)))
-        configure(swapButton, action: #selector(swapTexts(_:)))
-        configure(previousButton, action: #selector(previousDifference(_:)))
-        previousButton.toolTip = L10n.previousDifference + "  (⌘[)"
-        configure(nextButton, action: #selector(nextDifference(_:)))
-        nextButton.toolTip = L10n.nextDifference + "  (⌘])"
-        updateNavigationButtons()
-
-        whitespaceCheckbox.target = self
-        whitespaceCheckbox.action = #selector(toggleWhitespace(_:))
-        whitespaceCheckbox.toolTip = L10n.ignoreWhitespaceTooltip
-        whitespaceCheckbox.state = ignoresWhitespace ? .on : .off
-
-        scrollTogetherCheckbox.target = self
-        scrollTogetherCheckbox.action = #selector(toggleScrollTogether(_:))
-        scrollTogetherCheckbox.toolTip = L10n.scrollTogetherTooltip
-        scrollTogetherCheckbox.state = scrollSync.isEnabled ? .on : .off
-
-        bar.addSubview(summaryLabel)
-        bar.addSubview(scrollTogetherCheckbox)
-        bar.addSubview(whitespaceCheckbox)
-        bar.addSubview(previousButton)
-        bar.addSubview(nextButton)
-        bar.addSubview(swapButton)
-        bar.addSubview(clearButton)
-        bar.addSubview(compareButton)
+        statusBar.addSubview(summaryLabel)
+        // Draw-once custom view: topmost in its parent (macOS 26 z-order).
+        statusBar.addSubview(legend)
 
         root.addSubview(splitView)
-        root.addSubview(bar)
+        root.addSubview(statusBar)
         // Topmost, so its drawing is never overdrawn (macOS 26 z-order).
         root.addSubview(movedOverlay)
         movedOverlay.configure(left: left, right: right)
@@ -161,12 +194,6 @@ final class MainWindowController: NSObject, NSWindowDelegate {
 
         left.onEdit = { [weak self] in self?.textsEdited() }
         right.onEdit = { [weak self] in self?.textsEdited() }
-    }
-
-    private func configure(_ button: NSButton, action: Selector) {
-        button.target = self
-        button.action = action
-        button.bezelStyle = .rounded
     }
 
     func show() {
@@ -195,29 +222,104 @@ final class MainWindowController: NSObject, NSWindowDelegate {
 
     private func layoutRoot() {
         let bounds = root.bounds
-        bar.frame = NSRect(x: 0, y: 0, width: bounds.width, height: Self.barHeight)
-        splitView.frame = NSRect(x: 0, y: Self.barHeight,
-                                 width: bounds.width, height: bounds.height - Self.barHeight)
+        let barHeight = Self.statusBarHeight
+        statusBar.frame = NSRect(x: 0, y: 0, width: bounds.width, height: barHeight)
+        splitView.frame = NSRect(x: 0, y: barHeight,
+                                 width: bounds.width, height: bounds.height - barHeight)
         movedOverlay.frame = splitView.frame
 
-        for button in [compareButton, clearButton, swapButton, previousButton, nextButton,
-                       whitespaceCheckbox, scrollTogetherCheckbox] {
-            button.sizeToFit()
-        }
-        let buttonY = (Self.barHeight - compareButton.frame.height) / 2
-        var x = bounds.width - 12
-        for button in [compareButton, clearButton, swapButton, nextButton, previousButton,
-                       whitespaceCheckbox, scrollTogetherCheckbox] {
-            x -= button.frame.width
-            button.frame.origin = NSPoint(x: x, y: buttonY)
-            x -= 8
-        }
-        summaryLabel.frame = NSRect(x: 12, y: (Self.barHeight - 16) / 2,
-                                    width: max(0, x - 20), height: 16)
+        let margin = Self.outerMargin + 4
+        let legendWidth: CGFloat = 340
+        legend.frame = NSRect(x: bounds.width - margin - legendWidth, y: 0,
+                              width: legendWidth, height: barHeight)
+        summaryLabel.frame = NSRect(x: margin, y: (barHeight - 15) / 2,
+                                    width: max(0, legend.frame.minX - margin - 12), height: 15)
 
         left.layoutBox()
         right.layoutBox()
     }
+
+    // MARK: - Toolbar
+
+    private func makeToolbarItems() {
+        func symbolItem(_ id: NSToolbarItem.Identifier, symbol: String, label: String,
+                        toolTip: String, action: Selector) -> NSToolbarItem {
+            let item = NSToolbarItem(itemIdentifier: id)
+            item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+            item.label = label
+            item.toolTip = toolTip
+            item.target = self
+            item.action = action
+            item.isBordered = true
+            item.autovalidates = false
+            return item
+        }
+
+        toolbarItems[ToolbarID.previous] = symbolItem(
+            ToolbarID.previous, symbol: "chevron.up", label: L10n.previousDifference,
+            toolTip: L10n.previousDifference + "  (⌘[)", action: #selector(previousDifference(_:)))
+        toolbarItems[ToolbarID.next] = symbolItem(
+            ToolbarID.next, symbol: "chevron.down", label: L10n.nextDifference,
+            toolTip: L10n.nextDifference + "  (⌘])", action: #selector(nextDifference(_:)))
+        toolbarItems[ToolbarID.swap] = symbolItem(
+            ToolbarID.swap, symbol: "arrow.left.arrow.right", label: L10n.swapTexts,
+            toolTip: L10n.swapTexts + "  (⇧⌘T)", action: #selector(swapTexts(_:)))
+        toolbarItems[ToolbarID.clear] = symbolItem(
+            ToolbarID.clear, symbol: "trash", label: L10n.clearAll,
+            toolTip: L10n.clearAll + "  (⇧⌘K)", action: #selector(clearAll(_:)))
+
+        let options = NSMenuToolbarItem(itemIdentifier: ToolbarID.options)
+        options.image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: L10n.options)
+        options.label = L10n.options
+        options.toolTip = L10n.options
+        options.showsIndicator = true
+        let menu = NSMenu()
+        let whitespace = menu.addItem(withTitle: L10n.ignoreWhitespace,
+                                      action: #selector(toggleWhitespace(_:)), keyEquivalent: "")
+        whitespace.target = self
+        whitespace.toolTip = L10n.ignoreWhitespaceTooltip
+        let scrolling = menu.addItem(withTitle: L10n.scrollTogether,
+                                     action: #selector(toggleScrollTogether(_:)), keyEquivalent: "")
+        scrolling.target = self
+        scrolling.toolTip = L10n.scrollTogetherTooltip
+        options.menu = menu
+        toolbarItems[ToolbarID.options] = options
+
+        let compare = NSToolbarItem(itemIdentifier: ToolbarID.compare)
+        compare.view = compareButton
+        compare.label = L10n.compare
+        toolbarItems[ToolbarID.compare] = compare
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [.flexibleSpace, ToolbarID.previous, ToolbarID.next, .space,
+         ToolbarID.swap, ToolbarID.clear, ToolbarID.options, .space, ToolbarID.compare]
+    }
+
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        toolbarDefaultItemIdentifiers(toolbar)
+    }
+
+    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
+                 willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        toolbarItems[itemIdentifier]
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(toggleWhitespace(_:)):
+            menuItem.state = ignoresWhitespace ? .on : .off
+        case #selector(toggleScrollTogether(_:)):
+            menuItem.state = scrollSync.isEnabled ? .on : .off
+        case #selector(nextDifference(_:)), #selector(previousDifference(_:)):
+            return !hunkAnchors.isEmpty
+        default:
+            break
+        }
+        return true
+    }
+
+    // MARK: - Status
 
     private func setSummary(_ text: String) {
         summaryLabel.stringValue = text
@@ -228,12 +330,11 @@ final class MainWindowController: NSObject, NSWindowDelegate {
 
     func setIgnoresWhitespace(_ on: Bool) {
         ignoresWhitespace = on
-        whitespaceCheckbox.state = on ? .on : .off
         UserDefaults.standard.set(on, forKey: Self.ignoreWhitespaceDefaultsKey)
     }
 
-    @objc private func toggleWhitespace(_ sender: Any?) {
-        setIgnoresWhitespace(whitespaceCheckbox.state == .on)
+    @objc func toggleWhitespace(_ sender: Any?) {
+        setIgnoresWhitespace(!ignoresWhitespace)
         if !left.text.isEmpty || !right.text.isEmpty {
             compareNow()
         }
@@ -246,16 +347,16 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         updateNavigationButtons()
         scrollSync.invalidate()
         movedOverlay.clear()
+        legend.counts = nil
         setSummary(L10n.hintEdited)
     }
 
-    @objc private func toggleScrollTogether(_ sender: Any?) {
-        setScrollTogether(scrollTogetherCheckbox.state == .on)
+    @objc func toggleScrollTogether(_ sender: Any?) {
+        setScrollTogether(!scrollSync.isEnabled)
     }
 
     func setScrollTogether(_ on: Bool) {
         scrollSync.isEnabled = on
-        scrollTogetherCheckbox.state = on ? .on : .off
         UserDefaults.standard.set(on, forKey: Self.scrollTogetherDefaultsKey)
         if on {
             scrollSync.alignNow(drivenBy: left)
@@ -264,8 +365,8 @@ final class MainWindowController: NSObject, NSWindowDelegate {
 
     private func updateNavigationButtons() {
         let enabled = !hunkAnchors.isEmpty
-        previousButton.isEnabled = enabled
-        nextButton.isEnabled = enabled
+        toolbarItems[ToolbarID.previous]?.isEnabled = enabled
+        toolbarItems[ToolbarID.next]?.isEnabled = enabled
     }
 
     // MARK: - Actions
@@ -307,6 +408,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
             movedPairs = result.movedPairs
             currentHunk = -1
             updateNavigationButtons()
+            legend.counts = (result.leftChanged.count, result.rightChanged.count, result.leftMoved.count)
 
             scrollSync.activate(matchedLines: result.matchedLines,
                                 leftLineCount: left.lineCount, rightLineCount: right.lineCount,
@@ -318,11 +420,9 @@ final class MainWindowController: NSObject, NSWindowDelegate {
                 setSummary(result.onlyWhitespaceDiffers ? L10n.identicalExceptWhitespace : L10n.identical)
                 scrollSync.alignNow(drivenBy: left)
             } else {
-                setSummary(L10n.summary(removed: result.leftChanged.count,
-                                        added: result.rightChanged.count,
-                                        movedBlocks: result.movedPairs.count,
+                setSummary(L10n.summary(movedBlocks: result.movedPairs.count,
                                         hunks: result.hunkAnchors.count))
-                // Jump to the first difference, but keep the counts visible.
+                // Jump to the first difference, but keep the summary visible.
                 currentHunk = 0
                 scrollToCurrentHunk(updateSummary: false)
             }
