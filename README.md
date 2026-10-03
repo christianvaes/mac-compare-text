@@ -61,8 +61,11 @@ Requires only the Xcode Command Line Tools.
 Testing:
 
 ```sh
+# Unit tests for the diff engine, including a real-world fixture comparison:
+./tests/run-tests.sh
+
 # Full end-to-end UI test (drives the real app, verifies highlights,
-# navigation, swap, large texts, and renders dark/light screenshots):
+# navigation, sync scrolling, moved blocks, and renders screenshots):
 open build/CompareText.app --env COMPARETEXT_SELFTEST=1 --stdout /tmp/selftest.log
 ```
 

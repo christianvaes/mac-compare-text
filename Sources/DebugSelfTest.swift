@@ -173,6 +173,28 @@ enum DebugSelfTest {
             check("moved: no strong inline", strongHighlightRanges(controller.left).isEmpty)
             check("moved: summary mentions it", controller.summaryText.contains("verplaatst") || controller.summaryText.contains("moved"))
             renderWindow(controller.window, suffix: "moved")
+            demoStage(controller: controller)
+        }
+    }
+
+    /// Optional stage: render a comparison of caller-supplied texts (base64
+    /// in the environment), for visual inspection of real-world cases.
+    private static func demoStage(controller: MainWindowController) {
+        let env = ProcessInfo.processInfo.environment
+        guard let leftB64 = env["COMPARETEXT_DEMO_LEFT_B64"],
+              let rightB64 = env["COMPARETEXT_DEMO_RIGHT_B64"],
+              let leftData = Data(base64Encoded: leftB64),
+              let rightData = Data(base64Encoded: rightB64),
+              let leftText = String(data: leftData, encoding: .utf8),
+              let rightText = String(data: rightData, encoding: .utf8) else {
+            scrollSyncStage(controller: controller)
+            return
+        }
+        controller.left.setText(leftText)
+        controller.right.setText(rightText)
+        controller.compareNow {
+            out += "demo movedPairs=\(controller.movedPairs.count)\n"
+            renderWindow(controller.window, suffix: "demo")
             scrollSyncStage(controller: controller)
         }
     }
