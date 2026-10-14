@@ -13,19 +13,23 @@ for arg in "$@"; do
     esac
 done
 
-APP="build/Compare Text.app"
+# The .noindex suffix keeps Spotlight, and with it the Apps menu, from
+# listing the build output as a second copy of the app.
+BUILD="build.noindex"
+APP="$BUILD/Compare Text.app"
+LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 
-rm -rf build
+rm -rf "$BUILD" build
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 # Compile for both architectures and merge with lipo.
 swiftc -O -parse-as-library -target arm64-apple-macos14.0 \
-    Sources/*.swift -o build/CompareText-arm64
+    Sources/*.swift -o "$BUILD/CompareText-arm64"
 swiftc -O -parse-as-library -target x86_64-apple-macos14.0 \
-    Sources/*.swift -o build/CompareText-x86_64
-lipo -create build/CompareText-arm64 build/CompareText-x86_64 \
+    Sources/*.swift -o "$BUILD/CompareText-x86_64"
+lipo -create "$BUILD/CompareText-arm64" "$BUILD/CompareText-x86_64" \
     -output "$APP/Contents/MacOS/CompareText"
-rm build/CompareText-arm64 build/CompareText-x86_64
+rm "$BUILD/CompareText-arm64" "$BUILD/CompareText-x86_64"
 
 cp Info.plist "$APP/Contents/Info.plist"
 cp assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
@@ -66,6 +70,10 @@ fi
 # Distribution: a single zip that can be unpacked and launched on any Mac.
 mkdir -p dist
 ditto -c -k --keepParent "$APP" dist/CompareText.zip
+
+# Launching a bundle registers it with macOS; forget the build output so
+# only an installed copy is offered.
+"$LSREGISTER" -u "$APP" 2>/dev/null || true
 
 echo "Done: $APP  (universal: $(lipo -archs "$APP/Contents/MacOS/CompareText"))"
 echo "Distribution: dist/CompareText.zip"

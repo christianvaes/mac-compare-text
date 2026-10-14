@@ -1,4 +1,5 @@
 build/
+build.noindex/
 .DS_Store
 # local tool and editor directories (hidden folders)
 .*/

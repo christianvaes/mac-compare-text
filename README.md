@@ -69,7 +69,7 @@ No dependencies and no configuration.
 
 ```sh
 ./build.sh            # universal binary (arm64 + x86_64) + dist/CompareText.zip
-open "build/Compare Text.app"
+open "build.noindex/Compare Text.app"
 
 ./build.sh --install  # same, and replaces /Applications/Compare Text.app
 ```
@@ -86,7 +86,7 @@ Testing:
 # navigation, sync scrolling, moved blocks, and renders screenshots).
 # The paste check expects "PLAKTEST" on the clipboard:
 printf 'PLAKTEST' | pbcopy
-open "build/Compare Text.app" --env COMPARETEXT_SELFTEST=1 --stdout /tmp/selftest.log
+open "build.noindex/Compare Text.app" --env COMPARETEXT_SELFTEST=1 --stdout /tmp/selftest.log
 ```
 
 The UI test leaves both options (Ignore whitespace, Scroll together) switched
