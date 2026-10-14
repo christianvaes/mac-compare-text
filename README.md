@@ -68,8 +68,10 @@ No dependencies and no configuration.
 ## Building from source
 
 ```sh
-./build.sh          # universal binary (arm64 + x86_64) + dist/CompareText.zip
+./build.sh            # universal binary (arm64 + x86_64) + dist/CompareText.zip
 open build/CompareText.app
+
+./build.sh --install  # same, and replaces /Applications/CompareText.app
 ```
 
 Requires only the Xcode Command Line Tools.
