@@ -233,8 +233,8 @@ final class PaneController: NSObject, NSTextViewDelegate {
     }
 
     /// Line-level color for every changed line, stronger inline color for the
-    /// character ranges that differ within paired lines; moved lines get only
-    /// a line-level color (they are identical content by definition).
+    /// character ranges that differ within paired lines; moved lines get the
+    /// moved color, plus inline emphasis where the block was edited.
     func applyHighlights(lines: Set<Int>, inline: [Int: [NSRange]], lineColor: NSColor, inlineColor: NSColor,
                          movedLines: Set<Int> = [], movedColor: NSColor? = nil) {
         guard let storage = textView.textStorage else { return }
@@ -244,8 +244,15 @@ final class PaneController: NSObject, NSTextViewDelegate {
         }
         if let movedColor {
             for line in movedLines {
-                if let range = sidebar.characterRange(ofLine: line), range.length > 0 {
-                    storage.addAttribute(.backgroundColor, value: movedColor, range: range)
+                guard let range = sidebar.characterRange(ofLine: line), range.length > 0 else { continue }
+                storage.addAttribute(.backgroundColor, value: movedColor, range: range)
+                // A block can move and be edited on the way: emphasize the
+                // edits within the moved line.
+                for sub in inline[line] ?? [] {
+                    let absolute = NSRange(location: range.location + sub.location, length: sub.length)
+                    if NSMaxRange(absolute) <= NSMaxRange(range) {
+                        storage.addAttribute(.backgroundColor, value: inlineColor, range: absolute)
+                    }
                 }
             }
         }

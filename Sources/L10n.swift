@@ -56,12 +56,12 @@ enum L10n {
 
     static var ignoreWhitespace: String { t("Negeer witruimte", "Ignore whitespace") }
     static var ignoreWhitespaceTooltip: String {
-        t("Verschillen in inspringing, spaties en lege regels worden genegeerd.",
-          "Differences in indentation, spaces and blank lines are ignored.")
+        t("Verschillen in inspringing, spaties, regelafbreking en lege regels worden genegeerd.",
+          "Differences in indentation, spaces, line wrapping and blank lines are ignored.")
     }
     static var identicalExceptWhitespace: String {
-        t("Geen inhoudelijke verschillen — alleen witruimte/lege regels verschillen.",
-          "No content differences — only whitespace/blank lines differ.")
+        t("Geen inhoudelijke verschillen — alleen witruimte, regelafbreking of lege regels verschillen.",
+          "No content differences — only whitespace, line wrapping or blank lines differ.")
     }
 
     static var hintStart: String { t("Plak tekst in beide velden en druk op ⌘↩ om te vergelijken.",

@@ -17,16 +17,24 @@ The UI is in Dutch or English, depending on your system language.
    compare again. Highlights disappear automatically as soon as you type or
    paste.
 
-By default the comparison **ignores whitespace and blank lines**: lines that
-only differ in indentation or spacing (e.g. a YAML block nested one level
-deeper) are not marked, and added/removed blank lines are skipped. Untick the
-**Ignore whitespace** option (toolbar options menu or the Comparison menu) to compare strictly; the
-choice is remembered.
+By default the comparison **ignores whitespace**: indentation, spacing, line
+wrapping and blank lines. Lines that only differ in indentation (e.g. a YAML
+block nested one level deeper) are not marked, and text that was only
+re-wrapped — a paragraph split over several lines in one version and on one
+line in the other — is not marked either. Within a block of differences the
+comparison then works word by word, so only the words that actually changed
+are emphasized; a comment added to the end of a line marks just the comment.
+Untick the **Ignore whitespace** option (toolbar options menu or the
+Comparison menu) to compare strictly, line by line; the choice is remembered.
 
 **Moved blocks** (text present in both versions at a different position) are
 shown in **orange** in both panes instead of red+green, connected by an
 orange band through the gap between the panes, and counted separately in the
-summary.
+summary. A block that moved *and* was edited on the way (for example a
+settings section moved to the top that also gained comments) is shown as
+moved too, with the edits emphasized. This requires most of its text to be
+shared in the same order, and at least two distinctive lines to come through
+unchanged, so similar-looking but different blocks are not paired.
 
 With **Scroll together** enabled (the default), both panes scroll in sync
 after a comparison, aligned on matching lines — texts of different lengths
@@ -112,7 +120,7 @@ on, overwriting your saved choice.
 | `Sources/MovedLinksOverlay.swift` | Orange bands between old and new location of moved blocks |
 | `Sources/L10n.swift` | Dutch/English |
 | `Sources/DebugSelfTest.swift` | End-to-end test suite (only active with `COMPARETEXT_SELFTEST=1`) |
-| `tests/` | Diff engine unit tests (`run-tests.sh`) with a real-world fixture pair |
+| `tests/` | Diff engine unit tests (`run-tests.sh`) with real-world fixture pairs |
 
 ## Technical note (macOS 26)
 

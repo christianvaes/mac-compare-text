@@ -207,6 +207,14 @@ enum DebugSelfTest {
             out += "demo movedPairs=\(controller.movedPairs.count)\n"
             renderWindow(controller.window, suffix: "demo")
             renderFullWindow(controller.window, suffix: "demo-full")
+            // Second shot: both sides of the last moved block in view.
+            if let block = controller.movedPairs.last {
+                controller.scrollSync.performWithoutSync {
+                    controller.left.scroll(toVerticalPosition: Double(max(0, block.left.lowerBound - 2)))
+                    controller.right.scroll(toVerticalPosition: Double(max(0, block.right.lowerBound - 2)))
+                }
+                renderWindow(controller.window, suffix: "demo-moved")
+            }
             scrollSyncStage(controller: controller)
         }
     }
