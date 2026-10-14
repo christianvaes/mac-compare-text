@@ -306,7 +306,101 @@ enum DebugSelfTest {
             let after = controller.right.scrollView.documentVisibleRect.origin.y
             check("sync: inactive after edit", abs(before - after) < 0.5)
 
-            bigTextStage(controller: controller)
+            fileDropStage(controller: controller)
+        }
+    }
+
+    private static func fileDropStage(controller: MainWindowController) {
+        // 7e. Dropped files. The drag itself (Finder → window) can't be
+        // automated here; everything behind it runs on real files.
+        let fm = FileManager.default
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("drop-test", isDirectory: true)
+        try? fm.removeItem(at: dir)
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        func write(_ name: String, _ data: Data) -> URL {
+            let url = dir.appendingPathComponent(name)
+            try? data.write(to: url)
+            return url
+        }
+        let v1 = write("config-v1.yaml", Data("alias: test\r\nwaarde: 1\r\n".utf8))
+        let v2 = write("config-v2.yaml", Data("alias: test\nwaarde: 2\n".utf8))
+        let latin = write("latin1.txt", "café\n".data(using: .isoLatin1)!)
+        let binary = write("plaatje.png", Data([0x89, 0x50, 0x4E, 0x47, 0x00, 0x00, 0x01, 0x02]))
+        let big = dir.appendingPathComponent("groot.log")
+        fm.createFile(atPath: big.path, contents: nil)
+        if let handle = try? FileHandle(forWritingTo: big) {
+            try? handle.truncate(atOffset: UInt64(TextFileLoader.maxBytes + 1))
+            try? handle.close()
+        }
+
+        check("drop: text view handles file drops", controller.left.textView is FileDropTextView)
+
+        let pasted = "geplakte tekst die niet verloren mag gaan"
+        controller.left.setText(pasted)
+        controller.filesDropped([v1], on: .left)
+        check("drop: content loaded, line endings normalized", controller.left.text == "alias: test\nwaarde: 1\n")
+        check("drop: header shows file name", controller.left.currentFileName == "config-v1.yaml")
+        check("drop: summary names the file", controller.summaryText.contains("config-v1.yaml"))
+
+        controller.filesDropped([latin], on: .right)
+        check("drop: latin-1 decoded", controller.right.text == "café\n")
+        let before = controller.right.text
+        controller.filesDropped([binary], on: .right)
+        check("drop: binary refused", controller.right.text == before && controller.summaryText.contains("plaatje.png"))
+        controller.filesDropped([big], on: .right)
+        check("drop: over 50 MB refused", controller.right.text == before && controller.summaryText.contains("groot.log"))
+        controller.filesDropped([dir], on: .right)
+        check("drop: folder refused", controller.right.text == before)
+
+        // A file outside the app's container that was not dropped must stay
+        // unreadable: the sandbox only opens what the user drags in.
+        if let outside = ProcessInfo.processInfo.environment["COMPARETEXT_OUTSIDE_FILE"] {
+            check("drop: sandbox blocks files that were not dropped",
+                  TextFileLoader.load(URL(fileURLWithPath: outside)) == .failure(.unreadable))
+        }
+
+        // Undo needs the event's undo group closed: next run loop pass.
+        DispatchQueue.main.async {
+            controller.left.textView.undoManager?.undo()
+            check("drop: undo brings the pasted text back", controller.left.text == pasted)
+            check("drop: undo updates line numbers", controller.left.lineCount == 1)
+            check("drop: title back to default after undo", controller.left.currentFileName == nil)
+            controller.left.textView.undoManager?.redo()
+            check("drop: redo loads the file again",
+                  controller.left.text == "alias: test\nwaarde: 1\n" && controller.left.lineCount == 3
+                  && controller.left.currentFileName == "config-v1.yaml")
+            typingUndoCheck(controller: controller, then: {
+
+            // Two files at once: name order, compared right away.
+            controller.filesDropped([v2, v1], on: .right)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                check("drop two: v1 left, v2 right",
+                      controller.left.currentFileName == "config-v1.yaml"
+                      && controller.right.currentFileName == "config-v2.yaml")
+                check("drop two: compared", controller.hunkAnchors.count == 1)
+                try? fm.removeItem(at: dir)
+                bigTextStage(controller: controller)
+            }
+            })
+        }
+    }
+
+    /// Undo of ordinary typing must also reach the pane's bookkeeping.
+    private static func typingUndoCheck(controller: MainWindowController, then next: @escaping () -> Void) {
+        let pane = controller.right
+        pane.setText("een\ntwee")
+        DispatchQueue.main.async {
+            controller.window.makeFirstResponder(pane.textView)
+            pane.textView.setSelectedRange(NSRange(location: (pane.text as NSString).length, length: 0))
+            pane.textView.insertText("\ndrie", replacementRange: pane.textView.selectedRange())
+            check("typing: line added", pane.lineCount == 3)
+            DispatchQueue.main.async {
+                let before = pane.generation
+                pane.textView.undoManager?.undo()
+                check("typing: undo restores text", pane.text == "een\ntwee")
+                check("typing: undo updates line numbers", pane.lineCount == 2 && pane.generation > before)
+                next()
+            }
         }
     }
 

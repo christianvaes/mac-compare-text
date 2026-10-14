@@ -52,8 +52,34 @@ enum L10n {
         t("Beide panelen scrollen samen zodat overeenkomende regels naast elkaar blijven.",
           "Both panes scroll together so matching lines stay side by side.")
     }
-    static var leftPlaceholder: String { t("Plak hier de originele tekst (⌘V)", "Paste the original text here (⌘V)") }
-    static var rightPlaceholder: String { t("Plak hier de nieuwe tekst (⌘V)", "Paste the new text here (⌘V)") }
+    static var leftPlaceholder: String {
+        t("Plak hier de originele tekst (⌘V) of sleep een bestand hierheen",
+          "Paste the original text here (⌘V) or drop a file here")
+    }
+    static var rightPlaceholder: String {
+        t("Plak hier de nieuwe tekst (⌘V) of sleep een bestand hierheen",
+          "Paste the new text here (⌘V) or drop a file here")
+    }
+
+    static func fileLoaded(_ name: String) -> String {
+        t("\u{201C}\(name)\u{201D} geladen — ⌘↩ om te vergelijken.",
+          "Loaded \u{201C}\(name)\u{201D} — press ⌘↩ to compare.")
+    }
+    static func fileTooLarge(_ name: String) -> String {
+        t("\u{201C}\(name)\u{201D} is groter dan 50 MB en is niet geopend.",
+          "\u{201C}\(name)\u{201D} is larger than 50 MB and was not opened.")
+    }
+    static func fileNotText(_ name: String) -> String {
+        t("\u{201C}\(name)\u{201D} is geen tekstbestand en is niet geopend.",
+          "\u{201C}\(name)\u{201D} is not a text file and was not opened.")
+    }
+    static func fileUnreadable(_ name: String) -> String {
+        t("\u{201C}\(name)\u{201D} kon niet worden geopend.",
+          "\u{201C}\(name)\u{201D} could not be opened.")
+    }
+    static var onlyTwoFiles: String {
+        t("Alleen de eerste twee bestanden zijn geopend.", "Only the first two files were opened.")
+    }
 
     static var ignoreWhitespace: String { t("Negeer witruimte", "Ignore whitespace") }
     static var ignoreWhitespaceTooltip: String {

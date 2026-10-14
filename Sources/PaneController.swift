@@ -115,12 +115,24 @@ final class PaneController: NSObject, NSTextViewDelegate {
     /// Bumped on every edit; used to discard stale diff results.
     private(set) var generation = 0
     var onEdit: (() -> Void)?
+    /// Called with the URLs of files dropped on the text.
+    var onFilesDropped: (([URL]) -> Void)?
+
+    private let defaultTitle: String
+    /// The file the text was loaded from, valid while the text is unedited.
+    private var loadedFile: (name: String, generation: Int)?
 
     init(title: String, placeholderText: String) {
-        scrollView = NSTextView.scrollableTextView()
-        textView = scrollView.documentView as! NSTextView
+        // The subclass is created by the standard TextKit 2 setup, so the
+        // text view itself is configured exactly as before.
+        scrollView = FileDropTextView.scrollableTextView()
+        textView = scrollView.documentView as! FileDropTextView
         sidebar = LineNumberSidebar(textView: textView, scrollView: scrollView)
+        defaultTitle = title
         super.init()
+        (textView as? FileDropTextView)?.onFileDrop = { [weak self] urls in
+            self?.onFilesDropped?(urls)
+        }
 
         assert(textView.textLayoutManager != nil, "text view must stay on TextKit 2")
 
@@ -203,10 +215,57 @@ final class PaneController: NSObject, NSTextViewDelegate {
     var lineCount: Int { sidebar.lineCount }
 
     /// Programmatic replacement (swap, clear, tests). Runs the same
-    /// bookkeeping as a user edit.
-    func setText(_ newText: String) {
+    /// bookkeeping as a user edit; `fileName` labels the pane until the
+    /// text is edited.
+    func setText(_ newText: String, fileName: String? = nil) {
         textView.string = newText
         textDidChangeCommon()
+        markLoaded(from: fileName)
+    }
+
+    /// Replaces the whole text like a paste over a full selection: one undo
+    /// step brings the previous text back (and redo the new one).
+    ///
+    /// The undo is registered here rather than by the text view: undoing a
+    /// direct text-storage replacement through the text view does not report
+    /// a text change, which would leave line numbers and highlights stale.
+    func replaceAllUndoably(with newText: String, fileName: String?) {
+        let previousText = textView.string
+        let previousName = currentFileName
+        let undoManager = textView.undoManager
+        undoManager?.registerUndo(withTarget: self) { pane in
+            MainActor.assumeIsolated {
+                pane.replaceAllUndoably(with: previousText, fileName: previousName)
+            }
+        }
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: textView.font ?? NSFont.monospacedSystemFont(ofSize: 13, weight: .regular),
+            .foregroundColor: NSColor.textColor,
+        ]
+        let full = NSRange(location: 0, length: (previousText as NSString).length)
+        undoManager?.disableUndoRegistration()
+        textView.textStorage?.replaceCharacters(in: full, with: NSAttributedString(string: newText, attributes: attributes))
+        undoManager?.enableUndoRegistration()
+        textView.didChangeText()
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+        textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
+        markLoaded(from: fileName)
+    }
+
+    /// The name of the file the text came from, if it is still unedited.
+    var currentFileName: String? {
+        guard let loadedFile, loadedFile.generation == generation else { return nil }
+        return loadedFile.name
+    }
+
+    private func markLoaded(from fileName: String?) {
+        loadedFile = fileName.map { ($0, generation) }
+        updateTitle()
+    }
+
+    private func updateTitle() {
+        header.title = currentFileName ?? defaultTitle
+        header.needsDisplay = true
     }
 
     func textDidChange(_ notification: Notification) {
@@ -219,6 +278,7 @@ final class PaneController: NSObject, NSTextViewDelegate {
         clearHighlights()
         placeholder.isHidden = !textView.string.isEmpty
         header.detail = textView.string.isEmpty ? "" : L10n.lineCount(sidebar.lineCount)
+        updateTitle()
         onEdit?()
     }
 
