@@ -5,7 +5,11 @@ The UI is in Dutch or English, depending on your system language.
 
 ## Usage
 
-1. Paste text into the left field (original) and the right field (new).
+1. Paste text into the left field (original) and the right field (new), or
+   drop a text file (YAML, JSON, plain text, logs, code, …) on a field to load
+   its contents. Drop two files at once to fill both fields and compare them
+   right away (in name order, so `v1` lands left of `v2`). Loading a file can
+   be undone with **⌘Z**; binary files and files over 50 MB are refused.
 2. Click **Compare** in the toolbar (or press **⌘↩**).
 3. Differences are highlighted per line, with extra emphasis on the words
    that differ within a line (WinMerge-style):
@@ -100,6 +104,9 @@ on, overwriting your saved choice.
 - **App Sandbox** enabled, with no further entitlements; **hardened
   runtime** enabled. `build.sh` verifies after signing that the sandbox is
   really active.
+- **Dropped files only**: the app has no file-access entitlement. macOS
+  grants it read access to exactly the files you drop on it, for that drop;
+  it cannot open any other file.
 - **Plain text only**: pasted formatting, images and links are stripped;
   spell checking, autocorrection and data detection are off.
 - **No dependencies**: 100% Apple frameworks (AppKit + TextKit 2).
@@ -116,6 +123,8 @@ on, overwriting your saved choice.
 | `Sources/CompareTextApp.swift` | App lifecycle, menu bar and About window |
 | `Sources/MainWindowController.swift` | Window, toolbar, status bar with legend, actions (compare/navigate/swap/options) |
 | `Sources/PaneController.swift` | One text pane: header, line numbers, placeholder, highlights |
+| `Sources/FileDropTextView.swift` | Text view that loads dropped files instead of inserting their path |
+| `Sources/TextFileLoader.swift` | Reads a dropped file: size and binary checks, encoding, line endings |
 | `Sources/LineNumberSidebar.swift` | Line-number sidebar based on TextKit 2 layout positions |
 | `Sources/DiffEngine.swift` | Line- and word-level diff, moved-block detection (pure, unit-tested) |
 | `Sources/ScrollSyncCoordinator.swift` | Anchor-based synchronized scrolling between the panes |

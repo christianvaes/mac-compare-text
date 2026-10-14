@@ -185,6 +185,8 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
 
         left.onEdit = { [weak self] in self?.textsEdited() }
         right.onEdit = { [weak self] in self?.textsEdited() }
+        left.onFilesDropped = { [weak self] urls in self?.filesDropped(urls, on: .left) }
+        right.onFilesDropped = { [weak self] urls in self?.filesDropped(urls, on: .right) }
     }
 
     func show() {
@@ -455,8 +457,9 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
 
     @objc func swapTexts(_ sender: Any?) {
         let leftText = left.text
-        left.setText(right.text)
-        right.setText(leftText)
+        let leftName = left.currentFileName
+        left.setText(right.text, fileName: right.currentFileName)
+        right.setText(leftText, fileName: leftName)
         if !left.text.isEmpty || !right.text.isEmpty {
             compareNow()
         }
@@ -467,5 +470,51 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
         right.setText("")
         setSummary(L10n.hintStart)
         window.makeFirstResponder(left.textView)
+    }
+
+    // MARK: - Dropped files
+
+    enum Side { case left, right }
+
+    /// One file replaces the text of the pane it was dropped on. Two files
+    /// fill both panes, in name order (so "v1" lands left of "v2"), and are
+    /// compared right away.
+    func filesDropped(_ urls: [URL], on side: Side) {
+        let files = urls.sorted {
+            $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
+        }
+        guard let first = files.first else { return }
+        if files.count == 1 {
+            let pane = side == .left ? left : right
+            if load(first, into: pane) {
+                setSummary(L10n.fileLoaded(first.lastPathComponent))
+                window.makeFirstResponder(pane.textView)
+            }
+            return
+        }
+        guard load(files[0], into: left), load(files[1], into: right) else { return }
+        compareNow { [weak self] in
+            if files.count > 2, let self {
+                self.setSummary(self.summaryText + " " + L10n.onlyTwoFiles)
+            }
+        }
+    }
+
+    /// Loads a file into a pane, or reports in the status bar why not.
+    @discardableResult
+    func load(_ url: URL, into pane: PaneController) -> Bool {
+        let name = url.lastPathComponent
+        switch TextFileLoader.load(url) {
+        case .success(let text):
+            pane.replaceAllUndoably(with: text, fileName: name)
+            return true
+        case .failure(.tooLarge):
+            setSummary(L10n.fileTooLarge(name))
+        case .failure(.notText):
+            setSummary(L10n.fileNotText(name))
+        case .failure(.unreadable):
+            setSummary(L10n.fileUnreadable(name))
+        }
+        return false
     }
 }
