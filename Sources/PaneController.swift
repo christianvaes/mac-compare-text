@@ -31,9 +31,6 @@ final class PaneController: NSObject, NSTextViewDelegate {
         override var isFlipped: Bool { true }
 
         override func draw(_ dirtyRect: NSRect) {
-            NSColor.windowBackgroundColor.setFill()
-            bounds.fill()
-
             let titleAttributes: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
                 .foregroundColor: NSColor.secondaryLabelColor,

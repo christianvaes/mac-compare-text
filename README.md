@@ -1,4 +1,4 @@
-# Compare Text (Vergelijk Tekst)
+# Compare Text
 
 Simple, fully offline macOS app for comparing two pasted texts side by side.
 The UI is in Dutch or English, depending on your system language.
@@ -58,10 +58,10 @@ The whole app ships as a single file — no compiling needed:
 
 1. **[Download CompareText.zip](https://raw.githubusercontent.com/christianvaes/mac-compare-text/main/dist/CompareText.zip)**
    (about 420 KB) and double-click to unpack.
-2. Drag `CompareText.app` to the **Applications** folder.
+2. Drag `Compare Text.app` to the **Applications** folder.
 3. First launch: if macOS reports the app as damaged or from an unknown
    developer (it is not notarized by Apple), run this once in Terminal:
-   `xattr -d com.apple.quarantine /Applications/CompareText.app`
+   `xattr -d com.apple.quarantine "/Applications/Compare Text.app"`
 
 No dependencies and no configuration.
 
@@ -69,9 +69,9 @@ No dependencies and no configuration.
 
 ```sh
 ./build.sh            # universal binary (arm64 + x86_64) + dist/CompareText.zip
-open build/CompareText.app
+open "build/Compare Text.app"
 
-./build.sh --install  # same, and replaces /Applications/CompareText.app
+./build.sh --install  # same, and replaces /Applications/Compare Text.app
 ```
 
 Requires only the Xcode Command Line Tools.
@@ -86,7 +86,7 @@ Testing:
 # navigation, sync scrolling, moved blocks, and renders screenshots).
 # The paste check expects "PLAKTEST" on the clipboard:
 printf 'PLAKTEST' | pbcopy
-open build/CompareText.app --env COMPARETEXT_SELFTEST=1 --stdout /tmp/selftest.log
+open "build/Compare Text.app" --env COMPARETEXT_SELFTEST=1 --stdout /tmp/selftest.log
 ```
 
 The UI test leaves both options (Ignore whitespace, Scroll together) switched

@@ -1,7 +1,7 @@
 #!/bin/zsh
-# Builds CompareText.app: universal binary (Apple Silicon + Intel),
+# Builds "Compare Text.app": universal binary (Apple Silicon + Intel),
 # sandboxed, hardened runtime, plus a distribution zip in dist/.
-# With --install, the new build also replaces /Applications/CompareText.app.
+# With --install, the new build also replaces /Applications/Compare Text.app.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -13,7 +13,7 @@ for arg in "$@"; do
     esac
 done
 
-APP="build/CompareText.app"
+APP="build/Compare Text.app"
 
 rm -rf build
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -71,7 +71,9 @@ echo "Done: $APP  (universal: $(lipo -archs "$APP/Contents/MacOS/CompareText"))"
 echo "Distribution: dist/CompareText.zip"
 
 if [ "$INSTALL" -eq 1 ]; then
-    TARGET="/Applications/CompareText.app"
+    TARGET="/Applications/Compare Text.app"
+    # Earlier versions were installed under this name.
+    rm -rf "/Applications/CompareText.app"
     # A running copy keeps working on its old code until it is reopened.
     RUNNING=0
     pgrep -f "$TARGET/Contents/MacOS/CompareText" >/dev/null && RUNNING=1
@@ -84,5 +86,5 @@ if [ "$INSTALL" -eq 1 ]; then
     echo "Installed: $TARGET ($(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$TARGET/Contents/Info.plist"))"
     [ "$RUNNING" -eq 1 ] && echo "Note: the installed app is open; quit and reopen it to use the new version."
 else
-    echo "Run with: open $APP"
+    echo "Run with: open \"$APP\""
 fi

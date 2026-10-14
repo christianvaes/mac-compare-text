@@ -36,6 +36,7 @@ enum DebugSelfTest {
         check("editable", left.textView.isEditable && right.textView.isEditable)
         check("window visible", window.isVisible)
         check("panes equal width", abs(left.box.frame.width - right.box.frame.width) <= 1)
+        checkOneSurfaceAroundCards(controller: controller)
 
         // Toolbar: visible, all items present, every symbol resolves.
         let toolbarItems = window.toolbar?.items ?? []
@@ -217,6 +218,43 @@ enum DebugSelfTest {
             }
             scrollSyncStage(controller: controller)
         }
+    }
+
+    /// The margins, the gutter, the header band and the status bar must all
+    /// let the window background through (nothing painted there), so the
+    /// frame around the cards is one surface; the cards themselves are
+    /// opaque.
+    private static func checkOneSurfaceAroundCards(controller: MainWindowController) {
+        guard let content = controller.window.contentView, let layer = content.layer,
+              let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(content.bounds.width),
+                                         pixelsHigh: Int(content.bounds.height), bitsPerSample: 8,
+                                         samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let ctx = NSGraphicsContext(bitmapImageRep: rep) else {
+            check("one surface: render", false)
+            return
+        }
+        content.layoutSubtreeIfNeeded()
+        content.displayIfNeeded()
+        layer.render(in: ctx.cgContext)
+        // The layer render has the view's bottom-left origin at row 0.
+        func alpha(at point: NSPoint) -> CGFloat {
+            rep.colorAt(x: Int(point.x), y: Int(point.y))?.alphaComponent ?? -1
+        }
+        let bounds = content.bounds
+        let leftCard = content.convert(controller.left.card.bounds, from: controller.left.card)
+        let rightCard = content.convert(controller.right.card.bounds, from: controller.right.card)
+        let probes: [(String, NSPoint)] = [
+            ("left margin", NSPoint(x: leftCard.minX / 2, y: bounds.midY)),
+            ("right margin", NSPoint(x: (rightCard.maxX + bounds.maxX) / 2, y: bounds.midY)),
+            ("gutter", NSPoint(x: (leftCard.maxX + rightCard.minX) / 2, y: bounds.midY)),
+            ("status bar", NSPoint(x: bounds.midX, y: 3)),
+            ("header band", NSPoint(x: leftCard.midX, y: leftCard.maxY + 3)),
+        ]
+        for (name, point) in probes {
+            check("one surface: \(name) shows window background", alpha(at: point) == 0)
+        }
+        check("one surface: card is opaque", alpha(at: NSPoint(x: leftCard.midX, y: leftCard.midY)) > 0.9)
     }
 
     /// Renders the whole window frame including titlebar and toolbar.
