@@ -338,5 +338,139 @@ if CommandLine.arguments.count >= 3 {
     print("SKIP: fixture paths not provided")
 }
 
-if failures > 0 { print("\(failures) FAILURES (totaal)"); exit(1) }
-print("ALL TESTS PASSED INCLUDING FIXTURE")
+
+// ========== Line breaks count as whitespace (word level within hunks) ==========
+
+// Re-wrapped text is not a difference.
+let wrapped = "Dit is een lange zin die over\nmeerdere regels is afgebroken door\nde editor."
+let unwrapped = "Dit is een lange zin die over meerdere regels is afgebroken door de editor."
+r = DiffEngine.compare(left: wrapped, right: unwrapped, options: smart)
+check("reflow: identical", r.identical && r.onlyWhitespaceDiffers && r.hunkAnchors.isEmpty)
+r = DiffEngine.compare(left: wrapped, right: unwrapped, options: strict)
+check("reflow strict: still a difference", !r.identical)
+
+// Re-wrapped with one word changed: only the lines holding the change.
+r = DiffEngine.compare(left: "Alpha beta gamma delta\nepsilon zeta eta theta",
+                       right: "Alpha beta gamma DELTA epsilon zeta eta theta", options: smart)
+check("reflow edit: only changed lines", r.leftChanged == [0] && r.rightChanged == [0])
+check("reflow edit: word emphasized", r.leftInline[0] == [NSRange(location: 17, length: 5)]
+      && r.rightInline[0] == [NSRange(location: 17, length: 5)])
+check("reflow edit: one hunk", r.hunkAnchors.count == 1)
+
+// One word replaced by one word: only the differing characters.
+r = DiffEngine.compare(left: "Versie 20261013\nlange regel een twee\ndrie vier",
+                       right: "Versie 20261014\nlange regel een twee drie vier", options: smart)
+check("token refine: last digit only", r.leftInline[0] == [NSRange(location: 14, length: 1)]
+      && r.rightInline[0] == [NSRange(location: 14, length: 1)])
+
+// A comment added to a line: the left line is not colored, the comment is.
+r = DiffEngine.compare(left: "a: 1\nrendement: 0.87\nb: 2",
+                       right: "a: 1\nrendement: 0.87   # round trip comment\nb: 2", options: smart)
+check("added comment: left unmarked", r.leftChanged.isEmpty)
+check("added comment: right marked", r.rightChanged == [1])
+check("added comment: only comment emphasized",
+      r.rightInline[1] == [NSRange(location: 18, length: 20)])
+
+// A number repeated inside an added comment: the shared number stays with
+// its line, the comment is emphasized as one piece.
+r = DiffEngine.compare(left: "a: 1\nzon_naar_accu_deel: 0.55\nb: 2",
+                       right: "a: 1\nzon_naar_accu_deel: 0.55   # bij mij 55 procent\nb: 2", options: smart)
+check("repeated number: comment is one emphasis", r.leftChanged.isEmpty
+      && r.rightInline[1] == [NSRange(location: 27, length: 20)])
+
+// Two lines joined: only the new comma.
+r = DiffEngine.compare(left: "x = 1\ny = 2", right: "x = 1, y = 2", options: smart)
+check("joined: left unmarked", r.leftChanged.isEmpty)
+check("joined: comma emphasized", r.rightChanged == [0] && r.rightInline[0] == [NSRange(location: 5, length: 1)])
+
+// A banner of repeated punctuation is one token, not dozens.
+r = DiffEngine.compare(left: "kop\nalpha beta gamma\ndelta",
+                       right: "kop\n# ==========================\nalpha beta gamma delta", options: smart)
+check("banner: only banner added", r.leftChanged.isEmpty && r.rightChanged == [1])
+
+// A plain replacement still pairs both lines (unchanged behavior).
+r = DiffEngine.compare(left: "foo bar baz", right: "foo QUX baz", options: smart)
+check("replacement: both sides marked", r.leftChanged == [0] && r.rightChanged == [0])
+
+// Edits in place are never moves.
+r = DiffEngine.compare(
+    left: "begin\nregel een met inhoud alpha\nregel twee met inhoud beta\neinde",
+    right: "begin\nregel een met inhoud alpha # extra\nregel twee met inhoud beta # extra\neinde",
+    options: smart)
+check("in place: no move", r.movedPairs.isEmpty && r.leftChanged.isEmpty && r.rightChanged == [1, 2])
+
+// ========== Moves with edits ==========
+
+let editedMoveLeft = "kop\nblok_een: 1\nblok_twee: 2\nblok_drie: 3\nmidden een\nmidden twee\nmidden drie\nstaart"
+let editedMoveRight = "kop\nmidden een\nmidden twee\nmidden drie\n# nieuwe kop boven blok\nblok_een: 1   # eerste\nblok_twee: 2   # tweede\nblok_drie: 3\nstaart"
+r = DiffEngine.compare(left: editedMoveLeft, right: editedMoveRight, options: smart)
+check("edited move: one block", r.movedPairs == [MovedBlock(left: 1..<4, right: 5..<8)])
+check("edited move: lines orange", r.leftMoved == [1, 2, 3] && r.rightMoved == [5, 6, 7])
+check("edited move: new comment line green", r.rightChanged == [4] && r.leftChanged.isEmpty)
+check("edited move: comment emphasized", r.rightInline[5] == [NSRange(location: 14, length: 8)])
+// Swapped texts: the edits are now on the left; still one moved block.
+r = DiffEngine.compare(left: editedMoveRight, right: editedMoveLeft, options: smart)
+check("edited move swapped: one block", r.movedPairs.count == 1 && r.leftChanged == [4])
+// Strict comparison keeps exact moves only.
+r = DiffEngine.compare(left: editedMoveLeft, right: editedMoveRight, options: strict)
+check("edited move strict: not an edited move", r.leftMoved.count <= 1)
+
+// Similar but different list items are not paired as one moved-and-edited
+// item (one distinctive line per side is not enough evidence). Only the
+// identical line itself is an exact move, as before.
+let itemLeft = "lijst:\n- alias: Deur open\n  trigger: state\n  entity_id: sensor.deur\n  to: open\nmidden een\nmidden twee\nmidden drie"
+let itemRight = "lijst:\nmidden een\nmidden twee\nmidden drie\n- alias: Raam dicht\n  trigger: state\n  entity_id: sensor.raam\n  to: closed"
+r = DiffEngine.compare(left: itemLeft, right: itemRight, options: smart)
+check("similar items: not paired", r.movedPairs == [MovedBlock(left: 2..<3, right: 5..<6)])
+check("similar items: differing lines stay red/green", r.leftChanged == [1, 3, 4] && r.rightChanged == [4, 6, 7])
+
+// ========== Performance with whitespace-insensitive comparison ==========
+
+let s1 = (0..<1_500).map { "left line \($0)" }.joined(separator: "\n")
+let s2 = (0..<1_500).map { "right line \($0)" }.joined(separator: "\n")
+t0 = Date()
+r = DiffEngine.compare(left: s1, right: s2, options: smart)
+dt = Date().timeIntervalSince(t0)
+print(String(format: "worst case smart (2x1500 lines, every line edited): %.3fs", dt))
+check("worst case smart: fast", dt < 5.0)
+check("worst case smart: all marked", r.leftChanged.count == 1_500 && r.rightChanged.count == 1_500)
+
+let longWrapped = (0..<300).map { "woord\($0) en nog wat tekst" }.joined(separator: "\n")
+let longUnwrapped = (0..<60).map { block in
+    (0..<5).map { "woord\(block * 5 + $0) en nog wat tekst" }.joined(separator: " ")
+}.joined(separator: "\n")
+t0 = Date()
+r = DiffEngine.compare(left: longWrapped, right: longUnwrapped, options: smart)
+dt = Date().timeIntervalSince(t0)
+print(String(format: "re-wrapped text (300 lines into 60): %.3fs", dt))
+check("re-wrapped text: identical", r.identical && r.onlyWhitespaceDiffers)
+check("re-wrapped text: fast", dt < 2.0)
+
+// ========== Real-world fixture: re-wrapped and re-organized automation ==========
+
+if CommandLine.arguments.count >= 5 {
+    let v1 = try! String(contentsOfFile: CommandLine.arguments[3], encoding: .utf8)
+    let v2 = try! String(contentsOfFile: CommandLine.arguments[4], encoding: .utf8)
+    let lines1 = v1.components(separatedBy: "\n")
+    let lines2 = v2.components(separatedBy: "\n")
+    r = DiffEngine.compare(left: v1, right: v2, options: smart)
+    print("accu fixture: \(r.leftChanged.count) red, \(r.rightChanged.count) green, \(r.leftMoved.count)/\(r.rightMoved.count) moved, \(r.movedPairs.count) blocks")
+    check("accu: few red lines", r.leftChanged.count <= 16)
+    check("accu: few green lines", r.rightChanged.count <= 30)
+    check("accu: two moved blocks", r.movedPairs.count == 2)
+    let paragraph = lines1.firstIndex { $0.contains("Vult de accu zo veel mogelijk") }!
+    check("accu: re-wrapped paragraph unmarked",
+          !r.leftChanged.contains(paragraph) && !r.leftMoved.contains(paragraph))
+    let version = lines1.firstIndex { $0.contains("Versie 20261013") }!
+    check("accu: version digit emphasized", r.leftInline[version] == [NSRange(location: 16, length: 1)])
+    let rendementLeft = lines1.firstIndex { $0.contains("rendement: 0.87") }!
+    let rendementRight = lines2.firstIndex { $0.contains("rendement: 0.87") }!
+    check("accu: moved setting orange", r.leftMoved.contains(rendementLeft) && r.rightMoved.contains(rendementRight))
+    let commentStart = (lines2[rendementRight] as NSString).range(of: "#").location
+    check("accu: added comment emphasized", r.rightInline[rendementRight]?.first?.location == commentStart)
+} else {
+    print("SKIP: accu fixture paths not provided")
+}
+
+if failures > 0 { print("\(failures) FAILURES (total)"); exit(1) }
+print("ALL TESTS PASSED INCLUDING FIXTURES")
