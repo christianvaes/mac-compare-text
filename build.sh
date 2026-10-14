@@ -1,8 +1,17 @@
 #!/bin/zsh
 # Builds CompareText.app: universal binary (Apple Silicon + Intel),
 # sandboxed, hardened runtime, plus a distribution zip in dist/.
+# With --install, the new build also replaces /Applications/CompareText.app.
 set -euo pipefail
 cd "$(dirname "$0")"
+
+INSTALL=0
+for arg in "$@"; do
+    case "$arg" in
+        --install) INSTALL=1 ;;
+        *) echo "Usage: ./build.sh [--install]" >&2; exit 2 ;;
+    esac
+done
 
 APP="build/CompareText.app"
 
@@ -60,4 +69,20 @@ ditto -c -k --keepParent "$APP" dist/CompareText.zip
 
 echo "Done: $APP  (universal: $(lipo -archs "$APP/Contents/MacOS/CompareText"))"
 echo "Distribution: dist/CompareText.zip"
-echo "Run with: open $APP"
+
+if [ "$INSTALL" -eq 1 ]; then
+    TARGET="/Applications/CompareText.app"
+    # A running copy keeps working on its old code until it is reopened.
+    RUNNING=0
+    pgrep -f "$TARGET/Contents/MacOS/CompareText" >/dev/null && RUNNING=1
+    rm -rf "$TARGET"
+    ditto "$APP" "$TARGET"
+    # macOS adds Finder metadata to the bundle, which a strict signature
+    # check rejects; it is not part of the signature, so strip it.
+    xattr -cr "$TARGET" 2>/dev/null || true
+    codesign --verify --strict "$TARGET"
+    echo "Installed: $TARGET ($(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$TARGET/Contents/Info.plist"))"
+    [ "$RUNNING" -eq 1 ] && echo "Note: the installed app is open; quit and reopen it to use the new version."
+else
+    echo "Run with: open $APP"
+fi
