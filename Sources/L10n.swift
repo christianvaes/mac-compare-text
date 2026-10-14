@@ -12,9 +12,10 @@ enum L10n {
         lang == "nl" ? nl : en
     }
 
-    static var appName: String { t("Vergelijk Tekst", "Compare Text") }
-    static var quit: String { t("Stop Vergelijk Tekst", "Quit Compare Text") }
-    static var about: String { t("Over Vergelijk Tekst", "About Compare Text") }
+    /// The app's name is the same in every language.
+    static let appName = "Compare Text"
+    static var quit: String { t("Stop \(appName)", "Quit \(appName)") }
+    static var about: String { t("Over \(appName)", "About \(appName)") }
     static var builtOn: String { t("Gebouwd op", "Built on") }
     static var version: String { t("Versie", "Version") }
 

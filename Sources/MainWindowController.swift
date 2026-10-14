@@ -13,24 +13,18 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
 
     /// Split view with a wide empty gutter as divider; the moved-block
     /// overlay draws its connector ribbons in that gutter.
+    ///
+    /// Nothing around the cards paints a background of its own: the window
+    /// background shows through the margins, the gutter, the headers and the
+    /// status bar alike. Painting `windowBackgroundColor` in a view comes out
+    /// a shade darker than the window's own background on macOS 26, which
+    /// made the margins look like separate bars.
     final class GutterSplitView: NSSplitView {
         static let gutterWidth: CGFloat = 28
 
         override var dividerThickness: CGFloat { Self.gutterWidth }
 
-        override func drawDivider(in rect: NSRect) {
-            NSColor.windowBackgroundColor.setFill()
-            rect.fill()
-        }
-    }
-
-    /// Status bar: message on the left, color legend (with counts after a
-    /// comparison) on the right.
-    final class StatusBarView: NSView {
-        override func draw(_ dirtyRect: NSRect) {
-            NSColor.windowBackgroundColor.setFill()
-            bounds.fill()
-        }
+        override func drawDivider(in rect: NSRect) {}
     }
 
     /// Colored dots explaining the highlight colors; shows line counts once
@@ -43,9 +37,6 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
         override var isFlipped: Bool { true }
 
         override func draw(_ dirtyRect: NSRect) {
-            NSColor.windowBackgroundColor.setFill()
-            bounds.fill()
-
             let entries: [(NSColor, String, Int?)] = [
                 (.systemRed, L10n.legendRemoved, counts?.removed),
                 (.systemGreen, L10n.legendAdded, counts?.added),
@@ -88,7 +79,7 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
 
     private let root = RootView()
     private let splitView = GutterSplitView()
-    private let statusBar = StatusBarView()
+    private let statusBar = NSView()
     private let summaryLabel = NSTextField(labelWithString: L10n.hintStart)
     private let legend = LegendView()
     private let compareButton = NSButton(title: L10n.compare, target: nil, action: nil)
