@@ -23,8 +23,9 @@ The UI is in Dutch or English, depending on your system language.
    both sides (a blue line where lines were added on the other side) and is
    brought a third down the view, so every step visibly moves; the status bar
    says what it is (for example "11 lines added" or "block of 8 lines moved").
-   The **overview strip** at the right edge of each field is also its
-   scrollbar: it shows where all differences are in the whole text, the
+   The **overview strip** on the outer edge of each field (left of the left
+   field, right of the right one, so the middle stays free for the moved-block
+   ribbons) is also its scrollbar: it shows where all differences are in the whole text, the
    current one in blue, and a thumb for the part in view. Drag the thumb to
    scroll, click a mark to go to that difference, or click the empty track to
    scroll there.
@@ -55,9 +56,12 @@ moved too, with the edits emphasized. This requires most of its text to be
 shared in the same order, and at least two distinctive lines to come through
 unchanged, so similar-looking but different blocks are not paired.
 
-With **Scroll together** enabled (the default), both panes scroll in sync
-after a comparison, aligned on matching lines — texts of different lengths
-stay side by side. Editing a text pauses the sync until the next comparison.
+After a comparison, matching lines sit **side by side**: opposite a block
+that is longer on the other side (added, removed or moved lines, or a line
+that wraps differently), the shorter side gets empty space, as in WinMerge.
+The characters are never changed; the space disappears when you edit. With
+**Scroll together** enabled (the default), both panes then scroll as one.
+Editing a text pauses the sync until the next comparison.
 
 The status bar shows a color legend with line counts after each comparison.
 
@@ -154,7 +158,7 @@ choice.
 | `Sources/UnifiedDiff.swift` | Writes the differences as a unified diff (Copy differences) |
 | `Sources/LineNumberSidebar.swift` | Line-number sidebar based on TextKit 2 layout positions |
 | `Sources/DiffEngine.swift` | Line- and word-level diff, moved-block detection (pure, unit-tested) |
-| `Sources/ScrollSyncCoordinator.swift` | Anchor-based synchronized scrolling between the panes |
+| `Sources/ScrollSyncCoordinator.swift` | Synchronized scrolling between the aligned panes |
 | `Sources/MovedLinksOverlay.swift` | Orange bands between old and new location of moved blocks |
 | `Sources/L10n.swift` | Dutch/English |
 | `Sources/DebugSelfTest.swift` | End-to-end test suite (only active with `COMPARETEXT_SELFTEST=1`) |

@@ -127,7 +127,13 @@ final class PaneController: NSObject, NSTextViewDelegate {
     /// The file the text was loaded from, valid while the text is unedited.
     private var loadedFile: (name: String, generation: Int)?
 
-    init(title: String, placeholderText: String) {
+    /// Whether the overview scrollbar sits at the card's leading edge. The
+    /// left pane mirrors the right one, so both scrollbars are on the outside
+    /// and the moved-block ribbons in the middle touch the text directly.
+    private let overviewOnLeadingEdge: Bool
+
+    init(title: String, placeholderText: String, overviewOnLeadingEdge: Bool = false) {
+        self.overviewOnLeadingEdge = overviewOnLeadingEdge
         // The subclass is created by the standard TextKit 2 setup, so the
         // text view itself is configured exactly as before.
         scrollView = FileDropTextView.scrollableTextView()
@@ -163,7 +169,7 @@ final class PaneController: NSObject, NSTextViewDelegate {
         textView.allowsUndo = true
         textView.usesFindBar = true
         textView.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
-        textView.textContainerInset = NSSize(width: 4, height: 6)
+        textView.textContainerInset = Self.textInset
 
         box.controller = self
         header.title = title
@@ -176,7 +182,10 @@ final class PaneController: NSObject, NSTextViewDelegate {
         card.addSubview(overview)
         card.addSubview(placeholder)
         overview.onClick = { [weak self] line in self?.onOverviewClick?(line) }
-        overview.onScroll = { [weak self] top in self?.scroll(toVerticalPosition: top) }
+        overview.onScroll = { [weak self] progress in
+            guard let self else { return }
+            self.scroll(toDocumentY: progress * max(0, self.documentHeight - self.scrollView.contentView.bounds.height))
+        }
         // The overview strip is the vertical scrollbar; see OverviewBar.
         scrollView.hasVerticalScroller = false
         box.addSubview(card)
@@ -192,10 +201,24 @@ final class PaneController: NSObject, NSTextViewDelegate {
             name: NSView.boundsDidChangeNotification,
             object: scrollView.contentView
         )
+        // The thumb also changes when the text grows or shrinks.
+        textView.postsFrameChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(scrolled),
+            name: NSView.frameDidChangeNotification,
+            object: textView
+        )
     }
 
     func layoutBox() {
         let bounds = box.bounds
+        defer {
+            if scrollView.contentSize.width != lastTextWidth {
+                lastTextWidth = scrollView.contentSize.width
+                onTextWidthChange?()
+            }
+        }
         let cardFrame = NSRect(
             x: outerInsets.left,
             y: outerInsets.bottom,
@@ -208,15 +231,17 @@ final class PaneController: NSObject, NSTextViewDelegate {
 
         let contentHeight = cardFrame.height
         let sidebarWidth = sidebar.desiredThickness
-        sidebar.frame = NSRect(x: 0, y: 0, width: sidebarWidth, height: contentHeight)
         let overviewWidth = OverviewBar.width
-        scrollView.frame = NSRect(x: sidebarWidth, y: 0,
-                                  width: max(0, cardFrame.width - sidebarWidth - overviewWidth),
-                                  height: contentHeight)
-        overview.frame = NSRect(x: max(0, cardFrame.width - overviewWidth), y: 0,
+        // [overview][numbers][text] on the left pane, [numbers][text][overview]
+        // on the right one.
+        let sidebarX = overviewOnLeadingEdge ? overviewWidth : 0
+        let textX = sidebarX + sidebarWidth
+        let textWidth = max(0, cardFrame.width - sidebarWidth - overviewWidth)
+        sidebar.frame = NSRect(x: sidebarX, y: 0, width: sidebarWidth, height: contentHeight)
+        scrollView.frame = NSRect(x: textX, y: 0, width: textWidth, height: contentHeight)
+        overview.frame = NSRect(x: overviewOnLeadingEdge ? 0 : max(0, cardFrame.width - overviewWidth), y: 0,
                                 width: overviewWidth, height: contentHeight)
-        placeholder.frame = NSRect(x: sidebarWidth, y: contentHeight - 30,
-                                   width: max(0, cardFrame.width - sidebarWidth - overviewWidth), height: 30)
+        placeholder.frame = NSRect(x: textX, y: contentHeight - 30, width: textWidth, height: 30)
         sidebar.needsDisplay = true
         header.needsDisplay = true
         updateOverviewViewport()
@@ -228,18 +253,29 @@ final class PaneController: NSObject, NSTextViewDelegate {
     }
 
     private func updateOverviewViewport() {
-        guard let top = topVerticalPosition() else {
-            overview.visibleRange = nil
-            return
-        }
+        let height = documentHeight
+        guard height > 0 else { overview.visibleSpan = nil; return }
         let visible = scrollView.documentVisibleRect
-        var bottom = verticalPosition(atViewportY: visible.height) ?? Double(sidebar.lineCount)
-        // Scrolled fully down: the thumb belongs at the end of the track,
-        // whatever the margin below the last line.
-        if visible.maxY >= (scrollView.documentView?.frame.height ?? 0) - 0.5 {
-            bottom = Double(sidebar.lineCount)
+        overview.visibleSpan = min(1, visible.minY / height)...min(1, max(visible.minY, visible.maxY) / height)
+    }
+
+    /// Lines as fractions of the document height, for the overview strip.
+    private func span(ofLines lines: Range<Int>) -> ClosedRange<CGFloat> {
+        let height = max(1, documentHeight)
+        let top = documentY(atPosition: Double(lines.lowerBound)) / height
+        return top...max(top, documentY(atPosition: Double(lines.upperBound)) / height)
+    }
+
+    /// Places the overview marks where their lines are now; call after
+    /// heights changed (padding, wrapping).
+    func refreshOverviewPositions() {
+        overview.marks = overview.marks.map { mark in
+            var mark = mark
+            mark.span = span(ofLines: mark.lines)
+            return mark
         }
-        overview.visibleRange = (visible.minY <= 0.5 ? 0 : top, max(top, bottom))
+        overview.currentSpan = overview.currentRange.map(span(ofLines:))
+        updateOverviewViewport()
     }
 
     // MARK: - Text access
@@ -263,6 +299,8 @@ final class PaneController: NSObject, NSTextViewDelegate {
     /// direct text-storage replacement through the text view does not report
     /// a text change, which would leave line numbers and highlights stale.
     func replaceAllUndoably(with newText: String, fileName: String?) {
+        // Typing just before stays its own undo step.
+        textView.breakUndoCoalescing()
         let previousText = textView.string
         let previousName = currentFileName
         let undoManager = textView.undoManager
@@ -319,9 +357,10 @@ final class PaneController: NSObject, NSTextViewDelegate {
     // MARK: - Highlights
 
     func clearHighlights() {
+        clearPadding()
         overview.marks = []
         overview.currentRange = nil
-        overview.lineCount = sidebar.lineCount
+        overview.currentSpan = nil
         guard let storage = textView.textStorage, storage.length > 0 else { return }
         storage.removeAttribute(.backgroundColor, range: NSRange(location: 0, length: storage.length))
     }
@@ -367,9 +406,8 @@ final class PaneController: NSObject, NSTextViewDelegate {
         let strong = { (color: NSColor) in color.withAlphaComponent(0.85) }
         var marks = OverviewBar.marks(for: movedLines, color: strong(movedColor ?? .systemOrange))
         marks += OverviewBar.marks(for: lines, color: strong(lineColor))
-        overview.lineCount = sidebar.lineCount
         overview.marks = marks
-        updateOverviewViewport()
+        refreshOverviewPositions()
     }
 
     // MARK: - Navigation
@@ -384,6 +422,7 @@ final class PaneController: NSObject, NSTextViewDelegate {
     func setCurrentDifference(_ range: Range<Int>?) {
         sidebar.currentRange = range
         overview.currentRange = range
+        overview.currentSpan = range.map(span(ofLines:))
     }
 
     /// Scrolls so the line sits a third down the viewport, or as close as
@@ -395,7 +434,7 @@ final class PaneController: NSObject, NSTextViewDelegate {
         let target = min(max(0, line), sidebar.lineCount - 1)
         var lineTop = textView.frame.height
         if let frame = layoutFragmentFrame(ofLine: target) {
-            lineTop = frame.minY + textView.textContainerInset.height
+            lineTop = frame.minY + textView.textContainerOrigin.y
         }
         let clipHeight = scrollView.contentView.bounds.height
         let maxY = max(0, (scrollView.documentView?.frame.height ?? 0) - clipHeight)
@@ -418,12 +457,8 @@ final class PaneController: NSObject, NSTextViewDelegate {
         guard let layoutManager = textView.textLayoutManager,
               let contentStorage = layoutManager.textContentManager as? NSTextContentStorage else { return nil }
         let visibleY = scrollView.documentVisibleRect.origin.y + viewportY
-        let yInText = max(0, visibleY - textView.textContainerInset.height)
-        // Past the last laid-out fragment (TextKit 2 estimates the height of
-        // text it has not laid out yet, so a jump to the end can land below
-        // the real text): count it as the last line.
-        guard let fragment = layoutManager.textLayoutFragment(for: CGPoint(x: 0, y: yInText))
-                ?? lastLayoutFragment(layoutManager, contentStorage, below: yInText) else { return nil }
+        let yInText = max(0, visibleY - textView.textContainerOrigin.y)
+        guard let fragment = layoutManager.textLayoutFragment(for: CGPoint(x: 0, y: yInText)) else { return nil }
         let offset = contentStorage.offset(from: contentStorage.documentRange.location,
                                            to: fragment.rangeInElement.location)
         let line = sidebar.lineIndex(forCharacter: offset)
@@ -432,35 +467,33 @@ final class PaneController: NSObject, NSTextViewDelegate {
         return Double(line) + max(0, min(1, fraction))
     }
 
-    private func lastLayoutFragment(_ layoutManager: NSTextLayoutManager, _ contentStorage: NSTextContentStorage,
-                                    below y: CGFloat) -> NSTextLayoutFragment? {
-        var last: NSTextLayoutFragment?
-        layoutManager.enumerateTextLayoutFragments(from: contentStorage.documentRange.endLocation,
-                                                   options: [.reverse, .ensuresLayout]) { fragment in
-            last = fragment
-            return false
-        }
-        guard let last, y >= last.layoutFragmentFrame.minY else { return nil }
-        return last
+    /// Height of the whole document (text plus insets).
+    var documentHeight: CGFloat { textView.frame.height }
+
+    /// Height in the document of a logical position (line + fraction within
+    /// it): 0 is the very top, `lineCount` the very bottom.
+    func documentY(atPosition position: Double) -> CGFloat {
+        guard position > 0 else { return 0 }
+        guard position < Double(sidebar.lineCount) else { return documentHeight }
+        let line = Int(position)
+        guard let frame = layoutFragmentFrame(ofLine: line) else { return documentHeight }
+        let fraction = CGFloat(min(max(position - Double(line), 0), 1))
+        return frame.minY + fraction * frame.height + textView.textContainerOrigin.y
     }
 
     /// Scrolls so the given logical position sits at the top of the viewport,
-    /// clamped to the document. 0 is the very top (above the text inset),
-    /// `lineCount` the very bottom. Only this pane moves; callers guard loops.
+    /// clamped to the document. Only this pane moves; callers guard loops.
     func scroll(toVerticalPosition position: Double, horizontalOffset: CGFloat? = nil) {
         guard sidebar.lineCount > 0 else { return }
-        let line = min(max(0, Int(position)), sidebar.lineCount - 1)
-        let fraction = CGFloat(min(max(position - Double(line), 0), 1))
+        scroll(toDocumentY: documentY(atPosition: position), horizontalOffset: horizontalOffset)
+    }
 
-        var targetY = textView.frame.height
-        if position <= 0 {
-            targetY = 0
-        } else if position < Double(sidebar.lineCount), let frame = layoutFragmentFrame(ofLine: line) {
-            targetY = frame.minY + fraction * frame.height + textView.textContainerInset.height
-        }
+    /// Scrolls so the given document height is at the top of the viewport,
+    /// clamped to the document.
+    func scroll(toDocumentY y: CGFloat, horizontalOffset: CGFloat? = nil) {
         let clipHeight = scrollView.contentView.bounds.height
         let maxY = max(0, (scrollView.documentView?.frame.height ?? 0) - clipHeight)
-        targetY = min(max(0, targetY), maxY)
+        let targetY = min(max(0, y), maxY)
         var targetX = scrollView.documentVisibleRect.origin.x
         if let horizontalOffset {
             let maxX = max(0, (scrollView.documentView?.frame.width ?? 0) - scrollView.contentView.bounds.width)
@@ -505,7 +538,91 @@ final class PaneController: NSObject, NSTextViewDelegate {
         guard let frame = layoutFragmentFrame(ofLine: line) else {
             return textView.frame.height - visibleY
         }
-        return frame.minY + textView.textContainerInset.height - visibleY
+        return frame.minY + textView.textContainerOrigin.y - visibleY
+    }
+
+    // MARK: - Alignment padding
+
+    /// Empty space after a line (or above the first one) that keeps the two
+    /// texts side by side: opposite a block that is longer on the other side,
+    /// as in WinMerge. It is a paragraph-spacing attribute, so the characters
+    /// never change; it goes with the highlights on the next edit.
+    private var paddedParagraphs: [NSRange] = []
+    private static let textInset = NSSize(width: 4, height: 6)
+    /// The text view's own minimum height, before any alignment.
+    private lazy var baseMinimumHeight: CGFloat = textView.minSize.height
+
+    /// Called when the width available to the text changes (lines rewrap).
+    var onTextWidthChange: (() -> Void)?
+    private var lastTextWidth: CGFloat = -1
+
+    /// Height of a run of lines as laid out now, padding included.
+    func height(ofLines lines: Range<Int>) -> CGFloat {
+        guard !lines.isEmpty, let first = sidebar.characterRange(ofLine: lines.lowerBound),
+              let layoutManager = textView.textLayoutManager,
+              let contentStorage = layoutManager.textContentManager as? NSTextContentStorage,
+              let start = contentStorage.location(contentStorage.documentRange.location,
+                                                  offsetBy: first.location) else { return 0 }
+        let endOffset = sidebar.characterRange(ofLine: lines.upperBound)?.location
+            ?? (textView.string as NSString).length + 1
+        var height: CGFloat = 0
+        layoutManager.enumerateTextLayoutFragments(from: start, options: [.ensuresLayout]) { fragment in
+            let offset = contentStorage.offset(from: contentStorage.documentRange.location,
+                                               to: fragment.rangeInElement.location)
+            guard offset < endOffset else { return false }
+            height += fragment.layoutFragmentFrame.height
+            return true
+        }
+        return height
+    }
+
+    /// Replaces the padding: `after[line]` points of space below that line,
+    /// `top` points above the first line.
+    func setPadding(after: [Int: CGFloat], top: CGFloat) {
+        clearPadding()
+        guard let storage = textView.textStorage, storage.length > 0 else { return }
+        var spacing: [Int: CGFloat] = [:]
+        for (line, points) in after where points > 0.5 { spacing[line, default: 0] += points }
+        // Space above the first line: paragraph spacing is ignored there, so
+        // the inset grows instead (which also adds the space at the bottom,
+        // below the end of the text, where it does no harm).
+        if top > 0.5 { textView.textContainerInset = NSSize(width: Self.textInset.width, height: Self.textInset.height + top) }
+        guard !spacing.isEmpty else { return }
+        let text = storage.string as NSString
+        let base = textView.defaultParagraphStyle ?? .default
+        storage.beginEditing()
+        for (line, space) in spacing {
+            guard let range = sidebar.characterRange(ofLine: line) else { continue }
+            let paragraph = text.paragraphRange(for: NSRange(location: min(range.location, text.length), length: 0))
+            guard paragraph.length > 0 else { continue }
+            let style = base.mutableCopy() as! NSMutableParagraphStyle
+            style.paragraphSpacing = space
+            storage.addAttribute(.paragraphStyle, value: style, range: paragraph)
+            paddedParagraphs.append(paragraph)
+        }
+        storage.endEditing()
+    }
+
+    /// Makes the document at least this tall (empty space below the text),
+    /// so both panes can scroll to the same end.
+    func setMinimumDocumentHeight(_ height: CGFloat) {
+        textView.minSize = NSSize(width: textView.minSize.width, height: max(baseMinimumHeight, height))
+        textView.sizeToFit()
+    }
+
+    func clearPadding() {
+        if textView.textContainerInset != Self.textInset { textView.textContainerInset = Self.textInset }
+        if textView.minSize.height != baseMinimumHeight {
+            textView.minSize = NSSize(width: textView.minSize.width, height: baseMinimumHeight)
+        }
+        guard !paddedParagraphs.isEmpty, let storage = textView.textStorage else { return }
+        let base = textView.defaultParagraphStyle ?? .default
+        storage.beginEditing()
+        for range in paddedParagraphs where NSMaxRange(range) <= storage.length {
+            storage.addAttribute(.paragraphStyle, value: base, range: range)
+        }
+        storage.endEditing()
+        paddedParagraphs = []
     }
 
     /// Lays out (at most) one fragment to resolve the frame of a line.

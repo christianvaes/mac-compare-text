@@ -74,7 +74,8 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
     }
 
     let window: NSWindow
-    let left = PaneController(title: L10n.leftTitle, placeholderText: L10n.leftPlaceholder)
+    let left = PaneController(title: L10n.leftTitle, placeholderText: L10n.leftPlaceholder,
+                              overviewOnLeadingEdge: true)
     let right = PaneController(title: L10n.rightTitle, placeholderText: L10n.rightPlaceholder)
     let scrollSync: ScrollSyncCoordinator
 
@@ -107,7 +108,7 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
     private(set) var hunkAnchors: [(left: Int, right: Int)] = []
     private(set) var hunks: [Hunk] = []
     /// The last comparison, while it still matches the texts.
-    private var lastResult: DiffResult?
+    private(set) var lastResult: DiffResult?
     private(set) var movedPairs: [MovedBlock] = []
     private var currentHunk = -1
 
@@ -207,6 +208,8 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
         right.onFilesDropped = { [weak self] urls in self?.filesDropped(urls, on: .right) }
         left.onPaste = { [weak self] in self?.compareIfBothFilled() }
         right.onPaste = { [weak self] in self?.compareIfBothFilled() }
+        left.onTextWidthChange = { [weak self] in self?.scheduleRealign() }
+        right.onTextWidthChange = { [weak self] in self?.scheduleRealign() }
         left.onOverviewClick = { [weak self] line in self?.jumpToDifference(near: line, on: .left) }
         right.onOverviewClick = { [weak self] line in self?.jumpToDifference(near: line, on: .right) }
     }
@@ -376,6 +379,95 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
         left.setWrapsLines(on)
         right.setWrapsLines(on)
         scrollSync.syncsHorizontally = !on
+        alignPanes()
+        movedOverlay.needsDisplay = true
+    }
+
+    // MARK: - Side by side
+
+    private var realignWork: DispatchWorkItem?
+    /// Lines whose text differs (only whitespace or case, since they matched)
+    /// are measured one by one; beyond this many, only differences are.
+    private static let maxMeasuredPairs = 5_000
+
+    /// Rewrapped lines change heights: realign once resizing settles.
+    private func scheduleRealign() {
+        guard lastResult != nil else { return }
+        realignWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.alignPanes() }
+        realignWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+    }
+
+    /// Pads the shorter side of every stretch between matched lines, so the
+    /// matched lines sit side by side and both texts scroll as one.
+    func alignPanes() {
+        guard let result = lastResult else { return }
+        left.clearPadding()
+        right.clearPadding()
+        let pairs = result.matchedLines
+        var leftAfter: [Int: CGFloat] = [:], rightAfter: [Int: CGFloat] = [:]
+        var leftTop: CGFloat = 0, rightTop: CGFloat = 0
+
+        // Space for the shorter side: below the given line, or above the
+        // text when that line is -1.
+        func pad(_ difference: CGFloat, leftLine: Int, rightLine: Int) {
+            if difference > 0.5 {
+                if rightLine < 0 { rightTop += difference } else { rightAfter[rightLine, default: 0] += difference }
+            } else if difference < -0.5 {
+                if leftLine < 0 { leftTop -= difference } else { leftAfter[leftLine, default: 0] -= difference }
+            }
+        }
+
+        let leftText = left.text as NSString, rightText = right.text as NSString
+        var measureLines = wrapsLines && pairs.count <= Self.maxMeasuredPairs * 4
+        var measured = 0
+        var previous = (left: -1, right: -1)
+        for pair in pairs + [(left: left.lineCount, right: right.lineCount)] {
+            let leftLines = (previous.left + 1)..<max(previous.left + 1, pair.left)
+            let rightLines = (previous.right + 1)..<max(previous.right + 1, pair.right)
+            if !leftLines.isEmpty || !rightLines.isEmpty {
+                pad(left.height(ofLines: leftLines) - right.height(ofLines: rightLines),
+                    leftLine: leftLines.isEmpty ? previous.left : leftLines.upperBound - 1,
+                    rightLine: rightLines.isEmpty ? previous.right : rightLines.upperBound - 1)
+            }
+            // Matched lines that differ in whitespace or case can wrap
+            // differently.
+            if measureLines, pair.left < left.lineCount,
+               let leftRange = left.sidebar.characterRange(ofLine: pair.left),
+               let rightRange = right.sidebar.characterRange(ofLine: pair.right),
+               leftText.substring(with: leftRange) != rightText.substring(with: rightRange) {
+                measured += 1
+                if measured > Self.maxMeasuredPairs { measureLines = false }
+                pad(left.height(ofLines: pair.left..<(pair.left + 1)) - right.height(ofLines: pair.right..<(pair.right + 1)),
+                    leftLine: pair.left, rightLine: pair.right)
+            }
+            previous = pair
+        }
+        left.setPadding(after: leftAfter, top: leftTop)
+        right.setPadding(after: rightAfter, top: rightTop)
+        guard !leftAfter.isEmpty || !rightAfter.isEmpty || leftTop > 0.5 || rightTop > 0.5 else {
+            left.refreshOverviewPositions()
+            right.refreshOverviewPositions()
+            movedOverlay.needsDisplay = true
+            return
+        }
+        // Positions of text TextKit has not laid out yet are estimates; lay
+        // out everything so matched lines really end up side by side.
+        for pane in [left, right] {
+            if let layoutManager = pane.textView.textLayoutManager {
+                layoutManager.ensureLayout(for: layoutManager.documentRange)
+                layoutManager.textViewportLayoutController.layoutViewport()
+            }
+            pane.textView.sizeToFit()
+        }
+        // Space above one text also lands below its end (see setPadding):
+        // let the other one end as low, so both scroll to the same end.
+        let height = max(left.documentHeight, right.documentHeight)
+        for pane in [left, right] {
+            pane.setMinimumDocumentHeight(height)
+            pane.refreshOverviewPositions()
+        }
         movedOverlay.needsDisplay = true
     }
 
@@ -403,6 +495,9 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
         currentHunk = -1
         updateNavigationButtons()
         scrollSync.invalidate()
+        realignWork?.cancel()
+        left.clearPadding()
+        right.clearPadding()
         movedOverlay.clear()
         legend.counts = nil
         setSummary(left.text.isEmpty || right.text.isEmpty ? L10n.hintOtherSide : L10n.hintEdited)
@@ -487,9 +582,8 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
             updateNavigationButtons()
             legend.counts = (result.leftChanged.count, result.rightChanged.count, result.leftMoved.count)
 
-            scrollSync.activate(matchedLines: result.matchedLines,
-                                leftLineCount: left.lineCount, rightLineCount: right.lineCount,
-                                leftGeneration: leftGeneration, rightGeneration: rightGeneration)
+            alignPanes()
+            scrollSync.activate(leftGeneration: leftGeneration, rightGeneration: rightGeneration)
             movedOverlay.update(pairs: result.movedPairs,
                                 leftGeneration: leftGeneration, rightGeneration: rightGeneration)
 

@@ -103,13 +103,15 @@ final class LineNumberSidebar: NSView {
         ]
 
         let visible = scrollView.documentVisibleRect
-        let inset = textView.textContainerInset
+        // Where the text starts: the inset, plus any space above the first
+        // line that keeps the panes side by side.
+        let textTop = textView.textContainerOrigin.y
         var markerTop: CGFloat?
         var markerBottom: CGFloat?
         var insertionY: CGFloat?
 
         func drawNumber(_ line: Int, fragmentFrame frame: CGRect) {
-            let y = frame.minY + inset.height - visible.origin.y
+            let y = frame.minY + textTop - visible.origin.y
             if let range = currentRange, range.isEmpty, range.lowerBound == line { insertionY = y }
             guard y + frame.height >= 0, y <= bounds.height else { return }
             let isCurrent = currentRange?.contains(line) == true
@@ -127,7 +129,7 @@ final class LineNumberSidebar: NSView {
             label.draw(at: point, withAttributes: style)
         }
 
-        let topPoint = CGPoint(x: 0, y: max(0, visible.origin.y - inset.height))
+        let topPoint = CGPoint(x: 0, y: max(0, visible.origin.y - textTop))
         let startFragment = layoutManager.textLayoutFragment(for: topPoint)
         let docStart = contentStorage.documentRange.location
         var lastLine = -1
@@ -138,7 +140,7 @@ final class LineNumberSidebar: NSView {
             options: [.ensuresLayout]
         ) { fragment in
             let frame = fragment.layoutFragmentFrame
-            if frame.minY + inset.height - visible.origin.y > bounds.height { return false }
+            if frame.minY + textTop - visible.origin.y > bounds.height { return false }
             let offset = contentStorage.offset(from: docStart, to: fragment.rangeInElement.location)
             let line = lineIndex(forCharacter: offset)
             drawNumber(line, fragmentFrame: frame)
@@ -158,7 +160,7 @@ final class LineNumberSidebar: NSView {
         }
         // Added at the very end on the other side: below the last line.
         if let range = currentRange, range.isEmpty, range.lowerBound >= lineStarts.count, lastLine >= 0 {
-            insertionY = lastFrame.maxY + inset.height - visible.origin.y
+            insertionY = lastFrame.maxY + textTop - visible.origin.y
         }
 
         Self.markerColor.setFill()

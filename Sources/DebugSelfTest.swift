@@ -37,6 +37,12 @@ enum DebugSelfTest {
         check("editable", left.textView.isEditable && right.textView.isEditable)
         check("window visible", window.isVisible)
         check("panes equal width", abs(left.box.frame.width - right.box.frame.width) <= 1)
+        check("scrollbars on the outside: left pane at its left edge",
+              left.overview.frame.minX == 0 && left.sidebar.frame.minX == OverviewBar.width
+              && abs(left.scrollView.frame.maxX - left.card.bounds.width) < 0.5)
+        check("scrollbars on the outside: right pane at its right edge",
+              right.sidebar.frame.minX == 0
+              && abs(right.overview.frame.maxX - right.card.bounds.width) < 0.5)
         checkOneSurfaceAroundCards(controller: controller)
 
         // Toolbar: visible, all items present, every symbol resolves.
@@ -221,6 +227,27 @@ enum DebugSelfTest {
         controller.right.setText(rightText)
         controller.compareNow {
             out += "demo movedPairs=\(controller.movedPairs.count)\n"
+            // Alignment diagnosis: scroll the left pane like a user would and
+            // measure how far matched lines sit apart at the middle of the view.
+            let leftPane = controller.left, rightPane = controller.right
+            let pairs = controller.lastResult?.matchedLines ?? []
+            let documentHeight = leftPane.scrollView.documentView?.frame.height ?? 0
+            let viewHeight = leftPane.scrollView.documentVisibleRect.height
+            for step in 0...10 {
+                let y = (documentHeight - viewHeight) * CGFloat(step) / 10
+                leftPane.scrollView.contentView.scroll(to: NSPoint(x: 0, y: y))
+                leftPane.scrollView.reflectScrolledClipView(leftPane.scrollView.contentView)
+                var report = "align step \(step):"
+                for pane in [leftPane, rightPane] {
+                    pane.textView.textLayoutManager?.textViewportLayoutController.layoutViewport()
+                }
+                let top = leftPane.topVerticalPosition() ?? 0
+                let bottom = leftPane.verticalPosition(atViewportY: viewHeight) ?? top
+                let inView = pairs.filter { Double($0.left) >= top && Double($0.left + 1) <= bottom }
+                let worst = inView.map { abs(rightPane.viewportY(forLine: $0.right) - leftPane.viewportY(forLine: $0.left)) }.max() ?? -1
+                report += String(format: " lines %.0f-%.0f, %d matched in view, worst Δ=%.1f", top, bottom, inView.count, worst)
+                out += report + "\n"
+            }
             renderWindow(controller.window, suffix: "demo")
             renderFullWindow(controller.window, suffix: "demo-full")
             // Second shot: both sides of the last moved block in view.
@@ -321,7 +348,63 @@ enum DebugSelfTest {
             let after = controller.right.scrollView.documentVisibleRect.origin.y
             check("sync: inactive after edit", abs(before - after) < 0.5)
 
-            fileDropStage(controller: controller)
+            sideBySideStage(controller: controller)
+        }
+    }
+
+    /// Matched lines sit side by side: the shorter side of every difference
+    /// gets empty space, also when lines wrap differently.
+    private static func sideBySideStage(controller: MainWindowController) {
+        let left = controller.left, right = controller.right
+        let words = (0..<30).map { _ in "woord" }
+        let leftLines = ["a", "b", "c", "d", "e", "f", "weg 1", "weg 2", "weg 3", "weg 4", "g",
+                         words.joined(separator: "   "), "einde"]
+        let rightLines = ["nieuw 1", "nieuw 2", "nieuw 3", "a", "b", "c", "d", "erbij 1", "erbij 2",
+                          "e", "f", "g", words.joined(separator: " "), "einde"]
+        controller.setIgnoresWhitespace(true)
+        left.setText(leftLines.joined(separator: "\n"))
+        right.setText(rightLines.joined(separator: "\n"))
+        controller.compareNow {
+            let pairs = controller.lastResult?.matchedLines ?? []
+            let worst = pairs.map { abs(right.viewportY(forLine: $0.right) - left.viewportY(forLine: $0.left)) }.max() ?? -1
+            out += "side by side: \(pairs.count) matched, worst offset \(worst)\n"
+
+            check("side by side: every matched line level with its counterpart", pairs.count == 9 && worst < 0.5)
+            check("side by side: rewrapped line measured",
+                  left.height(ofLines: 11..<12) > right.height(ofLines: 12..<13) - 0.5)
+            check("side by side: documents equally tall", abs(left.documentHeight - right.documentHeight) < 0.5)
+
+            controller.setWrapsLines(false)
+            let worstUnwrapped = pairs.map { abs(right.viewportY(forLine: $0.right) - left.viewportY(forLine: $0.left)) }.max() ?? -1
+            check("side by side: also without wrapping", worstUnwrapped < 0.5)
+            controller.setWrapsLines(true)
+
+            // An edit removes the space again.
+            left.textView.insertText("x", replacementRange: NSRange(location: 0, length: 0))
+            var spaced = false
+            if let storage = left.textView.textStorage {
+                storage.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: storage.length)) { value, _, _ in
+                    if let style = value as? NSParagraphStyle, style.paragraphSpacing > 0 { spaced = true }
+                }
+            }
+            check("side by side: space gone after an edit", !spaced)
+
+            // Lines added at the very start: space above the first line, and
+            // the end of the text stays reachable.
+            let body = (0..<100).map { "regel \($0)" }
+            left.setText(body.joined(separator: "\n"))
+            right.setText((["extra 1", "extra 2", "extra 3"] + body).joined(separator: "\n"))
+            controller.compareNow {
+                check("side by side: space above the first line",
+                      abs(left.viewportY(forLine: 0) - right.viewportY(forLine: 3)) < 0.5)
+                check("side by side: equally tall with space on top", abs(left.documentHeight - right.documentHeight) < 0.5)
+                left.scroll(toDocumentY: left.documentHeight)
+                let height = left.scrollView.documentVisibleRect.height
+                check("side by side: last line reachable",
+                      left.viewportY(forLine: 99) + 16 <= height + 0.5
+                      && abs(left.viewportY(forLine: 99) - right.viewportY(forLine: 102)) < 0.5)
+                fileDropStage(controller: controller)
+            }
         }
     }
 
@@ -349,6 +432,9 @@ enum DebugSelfTest {
         }
 
         check("drop: text view handles file drops", controller.left.textView is FileDropTextView)
+        // Earlier stages typed without real events, so their undo group is
+        // still open; start clean.
+        controller.left.textView.undoManager?.removeAllActions()
 
         let pasted = "geplakte tekst die niet verloren mag gaan"
         controller.left.setText(pasted)
@@ -479,14 +565,17 @@ enum DebugSelfTest {
             check("overview: current difference shown", left.overview.currentRange == 1..<2)
             // Click near the second difference.
             let bar = left.overview
-            bar.press(atY: bar.bounds.height * 6.5 / 8)
+            let second = bar.marks[1].span
+            bar.press(atY: bar.bounds.height * (second.lowerBound + second.upperBound) / 2)
             bar.endDrag()
             check("overview: click jumps to nearest difference", left.sidebar.currentRange == 6..<7)
             // The strip really paints the marks: red at the first mark.
             if let rep = bar.bitmapImageRepForCachingDisplay(in: bar.bounds) {
                 bar.cacheDisplay(in: bar.bounds, to: rep)
                 let scale = CGFloat(rep.pixelsHigh) / bar.bounds.height
-                let color = rep.colorAt(x: rep.pixelsWide / 2, y: Int(bar.bounds.height * 1.5 / 8 * scale))?
+                let first = bar.marks[0].span
+                let color = rep.colorAt(x: rep.pixelsWide / 2,
+                                        y: Int(bar.bounds.height * (first.lowerBound + first.upperBound) / 2 * scale))?
                     .usingColorSpace(.sRGB)
                 check("overview: mark is drawn in red", (color?.redComponent ?? 0) > 0.6
                       && (color?.greenComponent ?? 1) < 0.5)
@@ -552,30 +641,36 @@ enum DebugSelfTest {
             // The overview strip is the only vertical scrollbar.
             let pane = controller.left, bar = controller.left.overview
             check("scrollbar: no system vertical scroller", !pane.scrollView.hasVerticalScroller)
-            if let thumb = bar.thumbRect, let top = pane.topVerticalPosition() {
-                // The marks of the lines in view lie inside the thumb.
-                let bottom = pane.verticalPosition(atViewportY: pane.scrollView.documentVisibleRect.height) ?? top
-                let scale = bar.bounds.height / CGFloat(pane.lineCount)
-                check("scrollbar: thumb covers the lines in view",
-                      CGFloat(top) * scale >= thumb.minY - 0.5 && CGFloat(bottom) * scale <= thumb.maxY + 0.5)
+            if let thumb = bar.thumbRect {
+                @MainActor func progress() -> CGFloat {
+                    let visible = pane.scrollView.documentVisibleRect
+                    return visible.minY / max(1, pane.documentHeight - visible.height)
+                }
+                @MainActor func thumbProgress() -> CGFloat {
+                    guard let thumb = bar.thumbRect else { return -1 }
+                    return thumb.minY / max(1, bar.bounds.height - thumb.height)
+                }
+                check("scrollbar: thumb at the scroll position", abs(thumbProgress() - progress()) < 0.005)
+                let other = controller.right.overview.thumbRect ?? .zero
+                out += "scrollbar thumbs: \(thumb) \(other) heights \(pane.documentHeight) \(controller.right.documentHeight)\n"
+                check("scrollbar: both thumbs alike", abs(other.minY - thumb.minY) < 1 && abs(other.height - thumb.height) < 1)
                 // Drag the thumb to the bottom, then back to the top.
                 bar.press(atY: thumb.midY)
                 bar.drag(toY: bar.bounds.height + 50)
-                let documentHeight = pane.scrollView.documentView?.frame.height ?? 0
                 check("scrollbar: dragging down reaches the end",
-                      abs(pane.scrollView.documentVisibleRect.maxY - documentHeight) < 2)
+                      abs(pane.scrollView.documentVisibleRect.maxY - pane.documentHeight) < 2)
                 check("scrollbar: thumb at the bottom",
                       abs((bar.thumbRect?.maxY ?? 0) - bar.bounds.height) < 1)
                 bar.drag(toY: -50)
                 bar.endDrag()
                 check("scrollbar: dragging up reaches the start", pane.scrollView.documentVisibleRect.minY < 1)
-                // Clicking the empty track scrolls there.
+                // Clicking the empty track centers the thumb there.
                 bar.press(atY: bar.bounds.height * 0.25)
                 bar.endDrag()
-                let after = pane.topVerticalPosition() ?? 0
                 check("scrollbar: track click scrolls there",
-                      abs(after / Double(pane.lineCount) - 0.25) < 0.05)
-                check("scrollbar: other side follows", controller.right.scrollView.documentVisibleRect.minY > 1000)
+                      abs((bar.thumbRect?.midY ?? 0) - bar.bounds.height * 0.25) < 1)
+                check("scrollbar: other side follows",
+                      abs(controller.right.scrollView.documentVisibleRect.minY - pane.scrollView.documentVisibleRect.minY) < 1)
             } else {
                 check("scrollbar: thumb shown for a long text", false)
             }
