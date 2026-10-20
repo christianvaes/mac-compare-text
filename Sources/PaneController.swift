@@ -176,6 +176,9 @@ final class PaneController: NSObject, NSTextViewDelegate {
         card.addSubview(overview)
         card.addSubview(placeholder)
         overview.onClick = { [weak self] line in self?.onOverviewClick?(line) }
+        overview.onScroll = { [weak self] top in self?.scroll(toVerticalPosition: top) }
+        // The overview strip is the vertical scrollbar; see OverviewBar.
+        scrollView.hasVerticalScroller = false
         box.addSubview(card)
         box.addSubview(header)
 
@@ -229,8 +232,14 @@ final class PaneController: NSObject, NSTextViewDelegate {
             overview.visibleRange = nil
             return
         }
-        let bottom = verticalPosition(atViewportY: scrollView.documentVisibleRect.height) ?? Double(sidebar.lineCount)
-        overview.visibleRange = (top, max(top, bottom))
+        let visible = scrollView.documentVisibleRect
+        var bottom = verticalPosition(atViewportY: visible.height) ?? Double(sidebar.lineCount)
+        // Scrolled fully down: the thumb belongs at the end of the track,
+        // whatever the margin below the last line.
+        if visible.maxY >= (scrollView.documentView?.frame.height ?? 0) - 0.5 {
+            bottom = Double(sidebar.lineCount)
+        }
+        overview.visibleRange = (visible.minY <= 0.5 ? 0 : top, max(top, bottom))
     }
 
     // MARK: - Text access
@@ -410,7 +419,11 @@ final class PaneController: NSObject, NSTextViewDelegate {
               let contentStorage = layoutManager.textContentManager as? NSTextContentStorage else { return nil }
         let visibleY = scrollView.documentVisibleRect.origin.y + viewportY
         let yInText = max(0, visibleY - textView.textContainerInset.height)
-        guard let fragment = layoutManager.textLayoutFragment(for: CGPoint(x: 0, y: yInText)) else { return nil }
+        // Past the last laid-out fragment (TextKit 2 estimates the height of
+        // text it has not laid out yet, so a jump to the end can land below
+        // the real text): count it as the last line.
+        guard let fragment = layoutManager.textLayoutFragment(for: CGPoint(x: 0, y: yInText))
+                ?? lastLayoutFragment(layoutManager, contentStorage, below: yInText) else { return nil }
         let offset = contentStorage.offset(from: contentStorage.documentRange.location,
                                            to: fragment.rangeInElement.location)
         let line = sidebar.lineIndex(forCharacter: offset)
@@ -419,15 +432,30 @@ final class PaneController: NSObject, NSTextViewDelegate {
         return Double(line) + max(0, min(1, fraction))
     }
 
+    private func lastLayoutFragment(_ layoutManager: NSTextLayoutManager, _ contentStorage: NSTextContentStorage,
+                                    below y: CGFloat) -> NSTextLayoutFragment? {
+        var last: NSTextLayoutFragment?
+        layoutManager.enumerateTextLayoutFragments(from: contentStorage.documentRange.endLocation,
+                                                   options: [.reverse, .ensuresLayout]) { fragment in
+            last = fragment
+            return false
+        }
+        guard let last, y >= last.layoutFragmentFrame.minY else { return nil }
+        return last
+    }
+
     /// Scrolls so the given logical position sits at the top of the viewport,
-    /// clamped to the document. Only this pane moves; callers guard loops.
+    /// clamped to the document. 0 is the very top (above the text inset),
+    /// `lineCount` the very bottom. Only this pane moves; callers guard loops.
     func scroll(toVerticalPosition position: Double, horizontalOffset: CGFloat? = nil) {
         guard sidebar.lineCount > 0 else { return }
         let line = min(max(0, Int(position)), sidebar.lineCount - 1)
         let fraction = CGFloat(min(max(position - Double(line), 0), 1))
 
         var targetY = textView.frame.height
-        if let frame = layoutFragmentFrame(ofLine: line) {
+        if position <= 0 {
+            targetY = 0
+        } else if position < Double(sidebar.lineCount), let frame = layoutFragmentFrame(ofLine: line) {
             targetY = frame.minY + fraction * frame.height + textView.textContainerInset.height
         }
         let clipHeight = scrollView.contentView.bounds.height

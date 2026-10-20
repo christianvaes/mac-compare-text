@@ -479,7 +479,8 @@ enum DebugSelfTest {
             check("overview: current difference shown", left.overview.currentRange == 1..<2)
             // Click near the second difference.
             let bar = left.overview
-            bar.click(atY: bar.bounds.height * 6.5 / 8)
+            bar.press(atY: bar.bounds.height * 6.5 / 8)
+            bar.endDrag()
             check("overview: click jumps to nearest difference", left.sidebar.currentRange == 6..<7)
             // The strip really paints the marks: red at the first mark.
             if let rep = bar.bitmapImageRepForCachingDisplay(in: bar.bounds) {
@@ -547,6 +548,37 @@ enum DebugSelfTest {
                   abs(controller.left.viewportY(forLine: 10_000) - third) < 20
                   && abs(controller.right.viewportY(forLine: 10_000) - third) < 20)
             check("navigation: marker on the changed line", controller.left.sidebar.currentRange == 10_000..<10_001)
+
+            // The overview strip is the only vertical scrollbar.
+            let pane = controller.left, bar = controller.left.overview
+            check("scrollbar: no system vertical scroller", !pane.scrollView.hasVerticalScroller)
+            if let thumb = bar.thumbRect, let top = pane.topVerticalPosition() {
+                // The marks of the lines in view lie inside the thumb.
+                let bottom = pane.verticalPosition(atViewportY: pane.scrollView.documentVisibleRect.height) ?? top
+                let scale = bar.bounds.height / CGFloat(pane.lineCount)
+                check("scrollbar: thumb covers the lines in view",
+                      CGFloat(top) * scale >= thumb.minY - 0.5 && CGFloat(bottom) * scale <= thumb.maxY + 0.5)
+                // Drag the thumb to the bottom, then back to the top.
+                bar.press(atY: thumb.midY)
+                bar.drag(toY: bar.bounds.height + 50)
+                let documentHeight = pane.scrollView.documentView?.frame.height ?? 0
+                check("scrollbar: dragging down reaches the end",
+                      abs(pane.scrollView.documentVisibleRect.maxY - documentHeight) < 2)
+                check("scrollbar: thumb at the bottom",
+                      abs((bar.thumbRect?.maxY ?? 0) - bar.bounds.height) < 1)
+                bar.drag(toY: -50)
+                bar.endDrag()
+                check("scrollbar: dragging up reaches the start", pane.scrollView.documentVisibleRect.minY < 1)
+                // Clicking the empty track scrolls there.
+                bar.press(atY: bar.bounds.height * 0.25)
+                bar.endDrag()
+                let after = pane.topVerticalPosition() ?? 0
+                check("scrollbar: track click scrolls there",
+                      abs(after / Double(pane.lineCount) - 0.25) < 0.05)
+                check("scrollbar: other side follows", controller.right.scrollView.documentVisibleRect.minY > 1000)
+            } else {
+                check("scrollbar: thumb shown for a long text", false)
+            }
 
             // Editing clears the marker: it no longer matches the text.
             controller.left.textView.insertText("x", replacementRange: NSRange(location: 0, length: 0))

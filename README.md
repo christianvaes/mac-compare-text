@@ -23,9 +23,11 @@ The UI is in Dutch or English, depending on your system language.
    both sides (a blue line where lines were added on the other side) and is
    brought a third down the view, so every step visibly moves; the status bar
    says what it is (for example "11 lines added" or "block of 8 lines moved").
-   The **overview strip** at the right edge of each field shows where all
-   differences are in the whole text, the current one in blue and the visible
-   part as a light area; click it to jump to the nearest difference.
+   The **overview strip** at the right edge of each field is also its
+   scrollbar: it shows where all differences are in the whole text, the
+   current one in blue, and a thumb for the part in view. Drag the thumb to
+   scroll, click a mark to go to that difference, or click the empty track to
+   scroll there.
 5. For a new comparison: select all (**⌘A**), paste the new text over it and
    compare again. Highlights disappear automatically as soon as you type or
    paste.
@@ -148,7 +150,7 @@ choice.
 | `Sources/PaneController.swift` | One text pane: header, line numbers, placeholder, highlights |
 | `Sources/FileDropTextView.swift` | Text view that loads dropped files instead of inserting their path |
 | `Sources/TextFileLoader.swift` | Reads a dropped file: size and binary checks, encoding, line endings |
-| `Sources/OverviewBar.swift` | Strip showing where all differences are; click to jump |
+| `Sources/OverviewBar.swift` | Scrollbar that shows where all differences are; drag to scroll, click to jump |
 | `Sources/UnifiedDiff.swift` | Writes the differences as a unified diff (Copy differences) |
 | `Sources/LineNumberSidebar.swift` | Line-number sidebar based on TextKit 2 layout positions |
 | `Sources/DiffEngine.swift` | Line- and word-level diff, moved-block detection (pure, unit-tested) |
