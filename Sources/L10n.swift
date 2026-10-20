@@ -62,8 +62,7 @@ enum L10n {
     }
 
     static func fileLoaded(_ name: String) -> String {
-        t("\u{201C}\(name)\u{201D} geladen — ⌘↩ om te vergelijken.",
-          "Loaded \u{201C}\(name)\u{201D} — press ⌘↩ to compare.")
+        t("\u{201C}\(name)\u{201D} geladen.", "Loaded \u{201C}\(name)\u{201D}.")
     }
     static func fileTooLarge(_ name: String) -> String {
         t("\u{201C}\(name)\u{201D} is groter dan 50 MB en is niet geopend.",
@@ -86,13 +85,35 @@ enum L10n {
         t("Verschillen in inspringing, spaties, regelafbreking en lege regels worden genegeerd.",
           "Differences in indentation, spaces, line wrapping and blank lines are ignored.")
     }
+    static var copyDifferences: String { t("Kopieer verschillen", "Copy Differences") }
+    static var compareFirst: String { t("Vergelijk eerst de teksten.", "Compare the texts first.") }
+    static var nothingToCopy: String { t("Geen verschillen om te kopiëren.", "No differences to copy.") }
+    static func differencesCopied(_ count: Int) -> String {
+        t(count == 1 ? "1 verschil als tekst gekopieerd." : "\(count) verschillen als tekst gekopieerd.",
+          count == 1 ? "Copied 1 difference as text." : "Copied \(count) differences as text.")
+    }
+    static var wrapLines: String { t("Regels afbreken", "Wrap lines") }
+    static var wrapLinesTooltip: String {
+        t("Lange regels lopen door op de volgende regel. Uit: horizontaal scrollen.",
+          "Long lines continue on the next line. Off: scroll horizontally.")
+    }
+    static var ignoreCase: String { t("Negeer hoofdletters", "Ignore case") }
+    static var ignoreCaseTooltip: String {
+        t("Hoofdletters en kleine letters tellen als gelijk.", "Upper- and lowercase letters count as equal.")
+    }
+    static var identicalExceptIgnored: String {
+        t("Geen inhoudelijke verschillen — alleen witruimte, regelafbreking, lege regels of hoofdletters verschillen.",
+          "No content differences — only whitespace, line wrapping, blank lines or letter case differ.")
+    }
     static var identicalExceptWhitespace: String {
         t("Geen inhoudelijke verschillen — alleen witruimte, regelafbreking of lege regels verschillen.",
           "No content differences — only whitespace, line wrapping or blank lines differ.")
     }
 
-    static var hintStart: String { t("Plak tekst in beide velden en druk op ⌘↩ om te vergelijken.",
-                                     "Paste text into both fields and press ⌘↩ to compare.") }
+    static var hintStart: String { t("Plak of sleep tekst in beide velden; de vergelijking start vanzelf.",
+                                     "Paste or drop text into both fields; the comparison starts by itself.") }
+    static var hintOtherSide: String { t("Plak of sleep nu de tekst voor het andere veld.",
+                                         "Now paste or drop the text for the other field.") }
     static var hintEdited: String { t("Tekst gewijzigd — klik op Vergelijk voor een nieuwe vergelijking.",
                                       "Text changed — click Compare to compare again.") }
     static var identical: String { t("Geen verschillen — de teksten zijn identiek.",
@@ -108,19 +129,23 @@ enum L10n {
         return text + t(" — ⌘] voor het volgende.", " — ⌘] for the next one.")
     }
 
-    static func differencePosition(_ index: Int, of total: Int, left: Range<Int>, right: Range<Int>) -> String {
-        t("Verschil \(index) van \(total) — links \(lines(left)), rechts \(lines(right)).",
-          "Difference \(index) of \(total) — left \(lines(left)), right \(lines(right)).")
+    /// "Verschil 3 van 17: 11 regels toegevoegd." — what happened, not
+    /// where: the marker already shows where.
+    static func differencePosition(_ index: Int, of total: Int, _ description: String) -> String {
+        t("Verschil \(index) van \(total): \(description).", "Difference \(index) of \(total): \(description).")
     }
 
-    /// "regel 12", "regels 12–15", or for lines added on the other side
-    /// "na regel 11" / "aan het begin".
-    private static func lines(_ range: Range<Int>) -> String {
-        if range.isEmpty {
-            return range.lowerBound == 0 ? t("aan het begin", "at the start")
-                : t("na regel \(range.lowerBound)", "after line \(range.lowerBound)")
-        }
-        if range.count == 1 { return t("regel \(range.lowerBound + 1)", "line \(range.lowerBound + 1)") }
-        return t("regels \(range.lowerBound + 1)–\(range.upperBound)", "lines \(range.lowerBound + 1)–\(range.upperBound)")
+    private static func lines(_ count: Int) -> String {
+        t(count == 1 ? "1 regel" : "\(count) regels", count == 1 ? "1 line" : "\(count) lines")
+    }
+    static func linesAdded(_ count: Int) -> String { t("\(lines(count)) toegevoegd", "\(lines(count)) added") }
+    static func linesRemoved(_ count: Int) -> String { t("\(lines(count)) verwijderd", "\(lines(count)) removed") }
+    static func linesChanged(_ count: Int) -> String { t("\(lines(count)) gewijzigd", "\(lines(count)) changed") }
+    static func linesReplaced(_ removed: Int, by added: Int) -> String {
+        t("\(lines(removed)) vervangen door \(added)", "\(lines(removed)) replaced by \(added)")
+    }
+    static func blockMoved(_ count: Int) -> String {
+        t(count == 1 ? "1 regel verplaatst" : "blok van \(count) regels verplaatst",
+          count == 1 ? "1 line moved" : "block of \(count) lines moved")
     }
 }

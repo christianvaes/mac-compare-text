@@ -68,6 +68,7 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
         static let next = NSToolbarItem.Identifier("next")
         static let swap = NSToolbarItem.Identifier("swap")
         static let clear = NSToolbarItem.Identifier("clear")
+        static let copy = NSToolbarItem.Identifier("copy")
         static let options = NSToolbarItem.Identifier("options")
         static let compare = NSToolbarItem.Identifier("compare")
     }
@@ -87,6 +88,8 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
     private var toolbarItems: [NSToolbarItem.Identifier: NSToolbarItem] = [:]
 
     private static let ignoreWhitespaceDefaultsKey = "ignoreWhitespace"
+    private static let ignoreCaseDefaultsKey = "ignoreCase"
+    private static let wrapLinesDefaultsKey = "wrapLines"
     private static let scrollTogetherDefaultsKey = "scrollTogether"
 
     private static let statusBarHeight: CGFloat = 30
@@ -99,8 +102,12 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
     private static let movedLineColor = NSColor.systemOrange.withAlphaComponent(0.18)
 
     private var comparing = false
+    /// A comparison was requested while one was running; run it after.
+    private var pendingCompare = false
     private(set) var hunkAnchors: [(left: Int, right: Int)] = []
     private(set) var hunks: [Hunk] = []
+    /// The last comparison, while it still matches the texts.
+    private var lastResult: DiffResult?
     private(set) var movedPairs: [MovedBlock] = []
     private var currentHunk = -1
 
@@ -112,8 +119,17 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
             : defaults.bool(forKey: MainWindowController.ignoreWhitespaceDefaultsKey)
     }()
 
+    private(set) var ignoresCase = UserDefaults.standard.bool(forKey: MainWindowController.ignoreCaseDefaultsKey)
+    private(set) var wrapsLines: Bool = {
+        let defaults = UserDefaults.standard
+        return defaults.object(forKey: MainWindowController.wrapLinesDefaultsKey) == nil
+            ? true
+            : defaults.bool(forKey: MainWindowController.wrapLinesDefaultsKey)
+    }()
+
     private var diffOptions: DiffOptions {
-        DiffOptions(ignoreWhitespace: ignoresWhitespace, ignoreBlankLines: ignoresWhitespace)
+        DiffOptions(ignoreWhitespace: ignoresWhitespace, ignoreBlankLines: ignoresWhitespace,
+                    ignoreCase: ignoresCase)
     }
 
     /// Exposed for the self-test harness.
@@ -186,8 +202,13 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
 
         left.onEdit = { [weak self] in self?.textsEdited() }
         right.onEdit = { [weak self] in self?.textsEdited() }
+        if !wrapsLines { setWrapsLines(false) }
         left.onFilesDropped = { [weak self] urls in self?.filesDropped(urls, on: .left) }
         right.onFilesDropped = { [weak self] urls in self?.filesDropped(urls, on: .right) }
+        left.onPaste = { [weak self] in self?.compareIfBothFilled() }
+        right.onPaste = { [weak self] in self?.compareIfBothFilled() }
+        left.onOverviewClick = { [weak self] line in self?.jumpToDifference(near: line, on: .left) }
+        right.onOverviewClick = { [weak self] line in self?.jumpToDifference(near: line, on: .right) }
     }
 
     func show() {
@@ -258,6 +279,9 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
         toolbarItems[ToolbarID.swap] = symbolItem(
             ToolbarID.swap, symbol: "arrow.left.arrow.right", label: L10n.swapTexts,
             toolTip: L10n.swapTexts + "  (⇧⌘T)", action: #selector(swapTexts(_:)))
+        toolbarItems[ToolbarID.copy] = symbolItem(
+            ToolbarID.copy, symbol: "doc.on.doc", label: L10n.copyDifferences,
+            toolTip: L10n.copyDifferences + "  (⇧⌘C)", action: #selector(copyDifferences(_:)))
         toolbarItems[ToolbarID.clear] = symbolItem(
             ToolbarID.clear, symbol: "trash", label: L10n.clearAll,
             toolTip: L10n.clearAll + "  (⇧⌘K)", action: #selector(clearAll(_:)))
@@ -272,6 +296,14 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
                                       action: #selector(toggleWhitespace(_:)), keyEquivalent: "")
         whitespace.target = self
         whitespace.toolTip = L10n.ignoreWhitespaceTooltip
+        let letterCase = menu.addItem(withTitle: L10n.ignoreCase,
+                                      action: #selector(toggleCase(_:)), keyEquivalent: "")
+        letterCase.target = self
+        letterCase.toolTip = L10n.ignoreCaseTooltip
+        let wrapping = menu.addItem(withTitle: L10n.wrapLines,
+                                    action: #selector(toggleWrap(_:)), keyEquivalent: "")
+        wrapping.target = self
+        wrapping.toolTip = L10n.wrapLinesTooltip
         let scrolling = menu.addItem(withTitle: L10n.scrollTogether,
                                      action: #selector(toggleScrollTogether(_:)), keyEquivalent: "")
         scrolling.target = self
@@ -287,7 +319,7 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.flexibleSpace, ToolbarID.previous, ToolbarID.next, .space,
-         ToolbarID.swap, ToolbarID.clear, ToolbarID.options, .space, ToolbarID.compare]
+         ToolbarID.swap, ToolbarID.copy, ToolbarID.clear, ToolbarID.options, .space, ToolbarID.compare]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -303,10 +335,14 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
         switch menuItem.action {
         case #selector(toggleWhitespace(_:)):
             menuItem.state = ignoresWhitespace ? .on : .off
+        case #selector(toggleCase(_:)):
+            menuItem.state = ignoresCase ? .on : .off
+        case #selector(toggleWrap(_:)):
+            menuItem.state = wrapsLines ? .on : .off
         case #selector(toggleScrollTogether(_:)):
             menuItem.state = scrollSync.isEnabled ? .on : .off
-        case #selector(nextDifference(_:)), #selector(previousDifference(_:)):
-            return !hunkAnchors.isEmpty
+        case #selector(nextDifference(_:)), #selector(previousDifference(_:)), #selector(copyDifferences(_:)):
+            return !hunks.isEmpty
         default:
             break
         }
@@ -334,16 +370,49 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
         }
     }
 
+    func setWrapsLines(_ on: Bool) {
+        wrapsLines = on
+        UserDefaults.standard.set(on, forKey: Self.wrapLinesDefaultsKey)
+        left.setWrapsLines(on)
+        right.setWrapsLines(on)
+        scrollSync.syncsHorizontally = !on
+        movedOverlay.needsDisplay = true
+    }
+
+    @objc func toggleWrap(_ sender: Any?) {
+        setWrapsLines(!wrapsLines)
+    }
+
+    func setIgnoresCase(_ on: Bool) {
+        ignoresCase = on
+        UserDefaults.standard.set(on, forKey: Self.ignoreCaseDefaultsKey)
+    }
+
+    @objc func toggleCase(_ sender: Any?) {
+        setIgnoresCase(!ignoresCase)
+        if !left.text.isEmpty || !right.text.isEmpty {
+            compareNow()
+        }
+    }
+
     private func textsEdited() {
         hunkAnchors = []
         hunks = []
+        lastResult = nil
         movedPairs = []
         currentHunk = -1
         updateNavigationButtons()
         scrollSync.invalidate()
         movedOverlay.clear()
         legend.counts = nil
-        setSummary(L10n.hintEdited)
+        setSummary(left.text.isEmpty || right.text.isEmpty ? L10n.hintOtherSide : L10n.hintEdited)
+    }
+
+    /// Pasting or dropping compares right away once both sides have text;
+    /// typing does not, so the colors don't flicker while you edit.
+    func compareIfBothFilled() {
+        guard !left.text.isEmpty, !right.text.isEmpty else { return }
+        compareNow()
     }
 
     @objc func toggleScrollTogether(_ sender: Any?) {
@@ -362,6 +431,7 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
         let enabled = !hunkAnchors.isEmpty
         toolbarItems[ToolbarID.previous]?.isEnabled = enabled
         toolbarItems[ToolbarID.next]?.isEnabled = enabled
+        toolbarItems[ToolbarID.copy]?.isEnabled = enabled
     }
 
     // MARK: - Actions
@@ -372,7 +442,11 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
 
     /// The completion handler is used by the self-test harness.
     func compareNow(completion: (() -> Void)? = nil) {
-        guard !comparing else { completion?(); return }
+        guard !comparing else {
+            pendingCompare = true
+            completion?()
+            return
+        }
         let leftText = left.text
         let rightText = right.text
         let leftGeneration = left.generation
@@ -388,7 +462,13 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
 
             comparing = false
             compareButton.isEnabled = true
-            defer { completion?() }
+            defer {
+                completion?()
+                if pendingCompare {
+                    pendingCompare = false
+                    compareNow()
+                }
+            }
             // Text was edited while the diff ran; the result no longer applies.
             guard left.generation == leftGeneration, right.generation == rightGeneration else { return }
 
@@ -402,6 +482,7 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
             hunkAnchors = result.hunkAnchors
             hunks = result.hunks
             movedPairs = result.movedPairs
+            lastResult = result
             currentHunk = -1
             updateNavigationButtons()
             legend.counts = (result.leftChanged.count, result.rightChanged.count, result.leftMoved.count)
@@ -413,7 +494,8 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
                                 leftGeneration: leftGeneration, rightGeneration: rightGeneration)
 
             if result.identical {
-                setSummary(result.onlyWhitespaceDiffers ? L10n.identicalExceptWhitespace : L10n.identical)
+                setSummary(!result.onlyWhitespaceDiffers ? L10n.identical
+                           : options.ignoreCase ? L10n.identicalExceptIgnored : L10n.identicalExceptWhitespace)
                 left.setCurrentDifference(nil)
                 right.setCurrentDifference(nil)
                 scrollSync.alignNow(drivenBy: left)
@@ -443,19 +525,57 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
         scrollToCurrentHunk(updateSummary: true)
     }
 
+    /// Overview click: go to the difference nearest to that line on that
+    /// side; without a comparison, just scroll there.
+    func jumpToDifference(near line: Int, on side: Side) {
+        guard !hunks.isEmpty else {
+            (side == .left ? left : right).reveal(line: line)
+            return
+        }
+        func distance(_ range: Range<Int>) -> Int {
+            if range.contains(line) { return 0 }
+            return line < range.lowerBound ? range.lowerBound - line : line - max(range.lowerBound, range.upperBound - 1)
+        }
+        let nearest = hunks.indices.min { a, b in
+            distance(side == .left ? hunks[a].left : hunks[a].right)
+                < distance(side == .left ? hunks[b].left : hunks[b].right)
+        }
+        if let nearest {
+            currentHunk = nearest
+            showCurrentHunk()
+        }
+    }
+
     /// The lines of the current difference on each side. For a moved
     /// block, the other side shows where it moved from or to, so old and
     /// new position sit side by side.
-    var currentDifferenceRanges: (left: Range<Int>, right: Range<Int>)? {
+    var currentDifferenceRanges: (left: Range<Int>, right: Range<Int>, moved: MovedBlock?)? {
         guard hunks.indices.contains(currentHunk) else { return nil }
         let hunk = hunks[currentHunk]
         if let first = hunk.left.first, let pair = movedPairs.first(where: { $0.left.contains(first) }) {
-            return (hunk.left, pair.right)
+            return (hunk.left, pair.right, pair)
         }
         if let first = hunk.right.first, let pair = movedPairs.first(where: { $0.right.contains(first) }) {
-            return (pair.left, hunk.right)
+            return (pair.left, hunk.right, pair)
         }
-        return (hunk.left, hunk.right)
+        return (hunk.left, hunk.right, nil)
+    }
+
+    /// What the current difference is, in words: added, removed, changed,
+    /// replaced or moved, with its size.
+    private func describeCurrentDifference(_ ranges: (left: Range<Int>, right: Range<Int>, moved: MovedBlock?)) -> String {
+        guard let result = lastResult else { return "" }
+        if let moved = ranges.moved {
+            return L10n.blockMoved(moved.left.filter { result.leftMoved.contains($0) }.count)
+        }
+        let removed = ranges.left.filter { result.leftChanged.contains($0) || result.leftMoved.contains($0) }.count
+        let added = ranges.right.filter { result.rightChanged.contains($0) || result.rightMoved.contains($0) }.count
+        switch (removed, added) {
+        case (0, _): return L10n.linesAdded(added)
+        case (_, 0): return L10n.linesRemoved(removed)
+        case let (r, a) where r == a: return L10n.linesChanged(r)
+        default: return L10n.linesReplaced(removed, by: added)
+        }
     }
 
     private func scrollToCurrentHunk(updateSummary: Bool) {
@@ -468,8 +588,23 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
         right.setCurrentDifference(ranges.right)
         if updateSummary {
             setSummary(L10n.differencePosition(currentHunk + 1, of: hunks.count,
-                                               left: ranges.left, right: ranges.right))
+                                               describeCurrentDifference(ranges)))
         }
+    }
+
+    /// Puts the differences on the clipboard as a unified diff.
+    @objc func copyDifferences(_ sender: Any?) {
+        guard lastResult != nil, !hunks.isEmpty else {
+            setSummary(lastResult == nil ? L10n.compareFirst : L10n.nothingToCopy)
+            return
+        }
+        let diff = UnifiedDiff.make(left: left.text, right: right.text, hunks: hunks,
+                                    leftName: left.currentFileName ?? L10n.leftTitle,
+                                    rightName: right.currentFileName ?? L10n.rightTitle)
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(diff, forType: .string)
+        setSummary(L10n.differencesCopied(hunks.count))
     }
 
     @objc func swapTexts(_ sender: Any?) {
@@ -504,8 +639,10 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
         if files.count == 1 {
             let pane = side == .left ? left : right
             if load(first, into: pane) {
-                setSummary(L10n.fileLoaded(first.lastPathComponent))
+                let otherEmpty = (side == .left ? right : left).text.isEmpty
+                setSummary(L10n.fileLoaded(first.lastPathComponent) + (otherEmpty ? " " + L10n.hintOtherSide : ""))
                 window.makeFirstResponder(pane.textView)
+                compareIfBothFilled()
             }
             return
         }

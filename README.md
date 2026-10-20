@@ -10,7 +10,10 @@ The UI is in Dutch or English, depending on your system language.
    its contents. Drop two files at once to fill both fields and compare them
    right away (in name order, so `v1` lands left of `v2`). Loading a file can
    be undone with **⌘Z**; binary files and files over 50 MB are refused.
-2. Click **Compare** in the toolbar (or press **⌘↩**).
+2. The comparison starts by itself once both fields have text, after pasting
+   or dropping. After typing, click **Compare** in the toolbar (or press
+   **⌘↩**); typing never triggers it, so the colors don't flicker while you
+   edit.
 3. Differences are highlighted per line, with extra emphasis on the words
    that differ within a line (WinMerge-style):
    - **red** (left) = line removed or changed
@@ -19,7 +22,10 @@ The UI is in Dutch or English, depending on your system language.
    The current difference is marked with a blue bar next to its line numbers on
    both sides (a blue line where lines were added on the other side) and is
    brought a third down the view, so every step visibly moves; the status bar
-   names its lines.
+   says what it is (for example "11 lines added" or "block of 8 lines moved").
+   The **overview strip** at the right edge of each field shows where all
+   differences are in the whole text, the current one in blue and the visible
+   part as a light area; click it to jump to the nearest difference.
 5. For a new comparison: select all (**⌘A**), paste the new text over it and
    compare again. Highlights disappear automatically as soon as you type or
    paste.
@@ -33,6 +39,10 @@ comparison then works word by word, so only the words that actually changed
 are emphasized; a comment added to the end of a line marks just the comment.
 Untick the **Ignore whitespace** option (toolbar options menu or the
 Comparison menu) to compare strictly, line by line; the choice is remembered.
+
+The same menus have **Ignore case** (off by default) and **Wrap lines** (on by
+default). With wrapping off, long lines run on with a horizontal scroller, and
+with Scroll together on both fields also scroll together horizontally.
 
 **Moved blocks** (text present in both versions at a different position) are
 shown in **orange** in both panes instead of red+green, connected by an
@@ -48,6 +58,10 @@ after a comparison, aligned on matching lines — texts of different lengths
 stay side by side. Editing a text pauses the sync until the next comparison.
 
 The status bar shows a color legend with line counts after each comparison.
+
+**Copy differences** (⇧⌘C, or the toolbar button) puts the differences on the
+clipboard as a unified diff — the format of `diff -u` and git — for pasting
+into a ticket or a message.
 
 Extras: **Swap** (⇧⌘T) exchanges both texts, **Clear** (⇧⌘K) empties
 everything, **⌘F** searches within a field, **⌘Z** is undo. The menu
@@ -81,6 +95,9 @@ open "build.noindex/Compare Text.app"
 ./build.sh --install  # same, and replaces /Applications/Compare Text.app
 ```
 
+The end-to-end self-test is only compiled into test builds
+(`./build.sh --selftest`); regular and installed builds don't contain it.
+
 Requires only the Xcode Command Line Tools.
 
 Testing:
@@ -90,14 +107,17 @@ Testing:
 ./tests/run-tests.sh
 
 # Full end-to-end UI test (drives the real app, verifies highlights,
-# navigation, sync scrolling, moved blocks, and renders screenshots).
-# The paste check expects "PLAKTEST" on the clipboard:
+# navigation, sync scrolling, moved blocks, dropped files, the options and
+# the overview strip, and renders screenshots). Needs a test build; the paste
+# check expects "PLAKTEST" on the clipboard:
+./build.sh --selftest
 printf 'PLAKTEST' | pbcopy
 open "build.noindex/Compare Text.app" --env COMPARETEXT_SELFTEST=1 --stdout /tmp/selftest.log
 ```
 
-The UI test leaves both options (Ignore whitespace, Scroll together) switched
-on, overwriting your saved choice.
+The UI test resets the options to their defaults (Ignore whitespace, Wrap
+lines and Scroll together on, Ignore case off), overwriting your saved
+choice.
 
 ## Security & design
 
@@ -128,6 +148,8 @@ on, overwriting your saved choice.
 | `Sources/PaneController.swift` | One text pane: header, line numbers, placeholder, highlights |
 | `Sources/FileDropTextView.swift` | Text view that loads dropped files instead of inserting their path |
 | `Sources/TextFileLoader.swift` | Reads a dropped file: size and binary checks, encoding, line endings |
+| `Sources/OverviewBar.swift` | Strip showing where all differences are; click to jump |
+| `Sources/UnifiedDiff.swift` | Writes the differences as a unified diff (Copy differences) |
 | `Sources/LineNumberSidebar.swift` | Line-number sidebar based on TextKit 2 layout positions |
 | `Sources/DiffEngine.swift` | Line- and word-level diff, moved-block detection (pure, unit-tested) |
 | `Sources/ScrollSyncCoordinator.swift` | Anchor-based synchronized scrolling between the panes |

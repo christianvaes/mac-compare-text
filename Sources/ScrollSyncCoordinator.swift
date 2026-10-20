@@ -66,10 +66,12 @@ final class ScrollSyncCoordinator: NSObject {
     private var map: AlignmentMap?
     private var mapGenerations = (left: -1, right: -1)
     private var isSyncing = false
-    private var lastDriverY: [ObjectIdentifier: CGFloat] = [:]
+    private var lastDriverOrigin: [ObjectIdentifier: CGPoint] = [:]
 
     /// User toggle ("Scroll together"); persisted by MainWindowController.
     var isEnabled = true
+    /// Also follow horizontal scrolling (when lines don't wrap).
+    var syncsHorizontally = false
 
     private var isActive: Bool {
         isEnabled && map != nil
@@ -98,7 +100,7 @@ final class ScrollSyncCoordinator: NSObject {
                            leftLineCount: leftLineCount,
                            rightLineCount: rightLineCount)
         mapGenerations = (leftGeneration, rightGeneration)
-        lastDriverY = [:]
+        lastDriverOrigin = [:]
     }
 
     func invalidate() {
@@ -119,7 +121,8 @@ final class ScrollSyncCoordinator: NSObject {
         guard let position = pane.topVerticalPosition() else { return }
         let target = pane === left ? right : left
         isSyncing = true
-        target.scroll(toVerticalPosition: map.map(position, leftToRight: pane === left))
+        target.scroll(toVerticalPosition: map.map(position, leftToRight: pane === left),
+                      horizontalOffset: syncsHorizontally ? pane.scrollView.documentVisibleRect.origin.x : nil)
         isSyncing = false
     }
 
@@ -138,15 +141,16 @@ final class ScrollSyncCoordinator: NSObject {
 
         // Bounds notifications also fire for pure size changes (find bar,
         // live resize); skip when the origin didn't move.
-        let originY = driver.scrollView.documentVisibleRect.origin.y
+        let origin = driver.scrollView.documentVisibleRect.origin
         let driverID = ObjectIdentifier(driver)
-        if lastDriverY[driverID] == originY { return }
-        lastDriverY[driverID] = originY
+        if lastDriverOrigin[driverID] == origin { return }
+        lastDriverOrigin[driverID] = origin
 
         guard let position = driver.topVerticalPosition() else { return }
         let target = driver === left ? right : left
         isSyncing = true
-        target.scroll(toVerticalPosition: map.map(position, leftToRight: driver === left))
+        target.scroll(toVerticalPosition: map.map(position, leftToRight: driver === left),
+                      horizontalOffset: syncsHorizontally ? origin.x : nil)
         isSyncing = false
     }
 }

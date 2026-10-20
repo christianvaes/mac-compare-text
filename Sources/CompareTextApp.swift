@@ -20,7 +20,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainController.show()
         NSApp.activate(ignoringOtherApps: true)
 
+        #if SELFTEST
         DebugSelfTest.runIfRequested(controller: mainController)
+        #endif
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -118,11 +120,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NSGraphicsContext.restoreGraphicsState()
 
-        if ProcessInfo.processInfo.environment["COMPARETEXT_SELFTEST"] == "1",
-           let png = rep.representation(using: .png, properties: [:]) {
-            try? png.write(to: URL(fileURLWithPath: NSTemporaryDirectory() + "comparetext-aboutinfo.png"))
-        }
-
         let image = NSImage(size: size)
         image.addRepresentation(rep)
         return image
@@ -188,9 +185,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                action: #selector(MainWindowController.clearAll(_:)), keyEquivalent: "k")
         clear.keyEquivalentModifierMask = [.command, .shift]
         compare.addItem(clear)
+        let copy = NSMenuItem(title: L10n.copyDifferences,
+                              action: #selector(MainWindowController.copyDifferences(_:)), keyEquivalent: "c")
+        copy.keyEquivalentModifierMask = [.command, .shift]
+        compare.addItem(copy)
         compare.addItem(.separator())
         compare.addItem(withTitle: L10n.ignoreWhitespace,
                         action: #selector(MainWindowController.toggleWhitespace(_:)), keyEquivalent: "")
+        compare.addItem(withTitle: L10n.ignoreCase,
+                        action: #selector(MainWindowController.toggleCase(_:)), keyEquivalent: "")
+        compare.addItem(withTitle: L10n.wrapLines,
+                        action: #selector(MainWindowController.toggleWrap(_:)), keyEquivalent: "")
         compare.addItem(withTitle: L10n.scrollTogether,
                         action: #selector(MainWindowController.toggleScrollTogether(_:)), keyEquivalent: "")
         compareItem.submenu = compare

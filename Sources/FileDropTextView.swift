@@ -11,6 +11,13 @@ import AppKit
 final class FileDropTextView: NSTextView {
     /// Called with the URLs of the files dropped on the view.
     var onFileDrop: (([URL]) -> Void)?
+    /// Called after text was pasted or dropped (not after typing).
+    var onPaste: (() -> Void)?
+
+    override func paste(_ sender: Any?) {
+        super.paste(sender)
+        onPaste?()
+    }
 
     private func fileURLs(_ sender: NSDraggingInfo) -> [URL] {
         let urls = sender.draggingPasteboard.readObjects(
@@ -30,7 +37,11 @@ final class FileDropTextView: NSTextView {
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         let urls = fileURLs(sender)
-        guard let onFileDrop, !urls.isEmpty else { return super.performDragOperation(sender) }
+        guard let onFileDrop, !urls.isEmpty else {
+            let accepted = super.performDragOperation(sender)
+            if accepted { onPaste?() }
+            return accepted
+        }
         onFileDrop(urls)
         return true
     }

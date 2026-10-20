@@ -4,6 +4,6 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 TMP=$(mktemp -d)
-swiftc -O Sources/DiffEngine.swift tests/main.swift -o "$TMP/difftests"
+swiftc -O Sources/DiffEngine.swift Sources/UnifiedDiff.swift tests/main.swift -o "$TMP/difftests"
 "$TMP/difftests" tests/fixtures/ha-v1.yaml tests/fixtures/ha-v2.yaml \
     tests/fixtures/accu-v1.yaml tests/fixtures/accu-v2.yaml

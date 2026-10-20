@@ -1,3 +1,4 @@
+#if SELFTEST
 import AppKit
 
 /// End-to-end test harness, only active when COMPARETEXT_SELFTEST=1 is set.
@@ -43,7 +44,7 @@ enum DebugSelfTest {
         let named = toolbarItems.filter { $0.itemIdentifier.rawValue != "NSToolbarFlexibleSpaceItem"
             && $0.itemIdentifier.rawValue != "NSToolbarSpaceItem" }
         check("toolbar visible", window.toolbar?.isVisible == true)
-        check("toolbar has 6 items", named.count == 6)
+        check("toolbar has 7 items", named.count == 7)
         check("toolbar symbols resolve", named.allSatisfy { $0.image != nil || $0.view != nil })
         out += "toolbar items: \(named.map(\.itemIdentifier.rawValue))\n"
 
@@ -97,13 +98,14 @@ enum DebugSelfTest {
         controller.nextDifference(nil)
         check("marker: removed line, insertion point on the right",
               left.sidebar.currentRange == 3..<4 && right.sidebar.currentRange == 3..<3)
-        check("marker: summary names the lines",
-              controller.summaryText.contains("2") && controller.summaryText.contains("4"))
+        check("marker: summary says what happened", controller.summaryText.contains(L10n.linesRemoved(1)))
         controller.nextDifference(nil)
         check("marker: added line, insertion point at the end on the left",
               left.sidebar.currentRange == 5..<5 && right.sidebar.currentRange == 4..<5)
+        check("marker: summary for an added line", controller.summaryText.contains(L10n.linesAdded(1)))
         controller.nextDifference(nil)
         check("marker: wraps around to the first", left.sidebar.currentRange == 1..<2)
+        check("marker: summary for a changed line", controller.summaryText.contains(L10n.linesChanged(1)))
         controller.previousDifference(nil)
         check("marker: previous goes back to the last", right.sidebar.currentRange == 4..<5)
         renderWindow(controller.window, suffix: "marker")
@@ -392,7 +394,7 @@ enum DebugSelfTest {
                       && controller.right.currentFileName == "config-v2.yaml")
                 check("drop two: compared", controller.hunkAnchors.count == 1)
                 try? fm.removeItem(at: dir)
-                bigTextStage(controller: controller)
+                featuresStage(controller: controller)
             }
             })
         }
@@ -414,6 +416,108 @@ enum DebugSelfTest {
                 check("typing: undo updates line numbers", pane.lineCount == 2 && pane.generation > before)
                 next()
             }
+        }
+    }
+
+    /// 7f. Auto-compare, ignore case, copy as text, overview strip, wrapping.
+    private static func featuresStage(controller: MainWindowController) {
+        let left = controller.left, right = controller.right
+        // Auto-compare after paste, not after typing.
+        left.setText("een\ntwee\ndrie")
+        right.setText("")
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString("een\nTWEE\ndrie", forType: .string)
+        controller.window.makeFirstResponder(right.textView)
+        right.textView.paste(nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            check("auto: paste compares", controller.hunks.count == 1)
+            right.textView.insertText("x", replacementRange: NSRange(location: 0, length: 0))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                check("auto: typing does not compare", controller.hunks.isEmpty
+                      && controller.summaryText == L10n.hintEdited)
+                caseAndCopyStage(controller: controller)
+            }
+        }
+    }
+
+    private static func caseAndCopyStage(controller: MainWindowController) {
+        let left = controller.left, right = controller.right
+        left.setText("Hallo Wereld\ntweede regel")
+        right.setText("hallo wereld\ntweede regel")
+        controller.setIgnoresCase(true)
+        controller.compareNow {
+            check("case: identical when ignoring case", controller.hunks.isEmpty
+                  && controller.summaryText == L10n.identicalExceptIgnored)
+            controller.setIgnoresCase(false)
+            controller.compareNow {
+                check("case: different when not ignoring", controller.hunks.count == 1)
+                controller.copyDifferences(nil)
+                let copied = NSPasteboard.general.string(forType: .string) ?? ""
+                // Same as `diff -u --label Origineel --label Nieuw` on these texts.
+                let expected = "--- \(L10n.leftTitle)\n+++ \(L10n.rightTitle)\n@@ -1,2 +1,2 @@\n"
+                    + "-Hallo Wereld\n+hallo wereld\n tweede regel\n"
+                check("copy: unified diff on the clipboard", copied == expected)
+                check("copy: status says so", controller.summaryText == L10n.differencesCopied(1))
+                left.setText("zelfde")
+                right.setText("zelfde")
+                controller.compareNow {
+                    controller.copyDifferences(nil)
+                    check("copy: nothing to copy", controller.summaryText == L10n.nothingToCopy)
+                    overviewStage(controller: controller)
+                }
+            }
+        }
+    }
+
+    private static func overviewStage(controller: MainWindowController) {
+        let left = controller.left
+        controller.left.setText("a\nb\nc\nd\ne\nf\ng\nh")
+        controller.right.setText("a\nX\nc\nd\ne\nf\nY\nh")
+        controller.compareNow {
+            check("overview: marks at the differences", left.overview.marks.map(\.lines) == [1..<2, 6..<7])
+            check("overview: current difference shown", left.overview.currentRange == 1..<2)
+            // Click near the second difference.
+            let bar = left.overview
+            bar.click(atY: bar.bounds.height * 6.5 / 8)
+            check("overview: click jumps to nearest difference", left.sidebar.currentRange == 6..<7)
+            // The strip really paints the marks: red at the first mark.
+            if let rep = bar.bitmapImageRepForCachingDisplay(in: bar.bounds) {
+                bar.cacheDisplay(in: bar.bounds, to: rep)
+                let scale = CGFloat(rep.pixelsHigh) / bar.bounds.height
+                let color = rep.colorAt(x: rep.pixelsWide / 2, y: Int(bar.bounds.height * 1.5 / 8 * scale))?
+                    .usingColorSpace(.sRGB)
+                check("overview: mark is drawn in red", (color?.redComponent ?? 0) > 0.6
+                      && (color?.greenComponent ?? 1) < 0.5)
+            }
+            wrapStage(controller: controller)
+        }
+    }
+
+    private static func wrapStage(controller: MainWindowController) {
+        let left = controller.left, right = controller.right
+        let long = String(repeating: "lang woord ", count: 60) + "\nkort"
+        left.setText(long)
+        right.setText(long)
+        controller.compareNow {
+            @MainActor func lineHeight(_ pane: PaneController) -> CGFloat {
+                pane.viewportY(forLine: 1) - pane.viewportY(forLine: 0)
+            }
+            check("wrap: long line wraps by default", lineHeight(left) > 40)
+            controller.setWrapsLines(false)
+            check("wrap off: long line on one row", lineHeight(left) < 25)
+            check("wrap off: text wider than the pane",
+                  left.textView.frame.width > left.scrollView.contentSize.width + 100
+                  && left.scrollView.hasHorizontalScroller)
+            left.scrollView.contentView.scroll(to: NSPoint(x: 200, y: 0))
+            left.scrollView.reflectScrolledClipView(left.scrollView.contentView)
+            check("wrap off: other side scrolls along horizontally",
+                  abs(right.scrollView.documentVisibleRect.origin.x - 200) < 1)
+            controller.setWrapsLines(true)
+            check("wrap on: wraps again", lineHeight(left) > 40
+                  && abs(left.textView.frame.width - left.scrollView.contentSize.width) < 1
+                  && !left.scrollView.hasHorizontalScroller)
+            bigTextStage(controller: controller)
         }
     }
 
@@ -540,3 +644,4 @@ enum DebugSelfTest {
         exit(failures == 0 ? 0 : 1)
     }
 }
+#endif

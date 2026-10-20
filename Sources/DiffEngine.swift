@@ -8,6 +8,8 @@ struct DiffOptions: Sendable, Equatable {
     var ignoreWhitespace: Bool = false
     /// Lines that are empty after trimming never count as differences.
     var ignoreBlankLines: Bool = false
+    /// Upper- and lowercase letters count as equal.
+    var ignoreCase: Bool = false
     /// Detect blocks that occur unchanged in both texts at different
     /// positions and classify them as moved instead of removed+added.
     var detectMoves: Bool = true
@@ -185,7 +187,7 @@ enum DiffEngine {
                 detectEditedMoves(a: a, b: b,
                                   pureRemovedKept: &pureRemovedKept, removedHunk: &pureRemovedHunk,
                                   pureInsertedKept: &pureInsertedKept, insertedHunk: &pureInsertedHunk,
-                                  result: &result)
+                                  foldCase: options.ignoreCase, result: &result)
             }
             detectMoves(a: a, b: b,
                         pureRemovedKept: pureRemovedKept,
@@ -195,7 +197,7 @@ enum DiffEngine {
         }
 
         if result.identical,
-           options.ignoreWhitespace || options.ignoreBlankLines,
+           options.ignoreWhitespace || options.ignoreBlankLines || options.ignoreCase,
            left != right {
             result.onlyWhitespaceDiffers = true
         }
@@ -219,7 +221,8 @@ enum DiffEngine {
     ) {
         if options.ignoreWhitespace, !aKept.isEmpty, !bKept.isEmpty,
            let verdicts = wordDiff(aKept.map { a.lines[a.original($0)] },
-                                   bKept.map { b.lines[b.original($0)] }) {
+                                   bKept.map { b.lines[b.original($0)] },
+                                   foldCase: options.ignoreCase) {
             func apply(_ lineVerdicts: [LineVerdict], side: Side, kept: Range<Int>,
                        changed: inout Set<Int>, inline: inout [Int: [NSRange]],
                        pure: inout [Int]) -> Range<Int>? {
@@ -274,7 +277,9 @@ enum DiffEngine {
             let keyA = a.keys[keptA]
             let keyB = b.keys[keptB]
             if keyA != keyB, similarity(keyA, keyB) >= pairSimilarityThreshold {
-                let (rangesA, rangesB) = intraline(a.lines[lineA], b.lines[lineB])
+                let (rangesA, rangesB) = options.ignoreCase
+                    ? intraline(caseFolded(a.lines[lineA]), caseFolded(b.lines[lineB]))
+                    : intraline(a.lines[lineA], b.lines[lineB])
                 if !rangesA.isEmpty { result.leftInline[lineA] = rangesA }
                 if !rangesB.isEmpty { result.rightInline[lineB] = rangesB }
             } else {
@@ -324,10 +329,10 @@ enum DiffEngine {
 
     /// Word diff of a hunk across its line breaks. Returns nil when the hunk
     /// is too large or too dissimilar, or when no line comes out unchanged.
-    private static func wordDiff(_ aLines: [String], _ bLines: [String])
+    private static func wordDiff(_ aLines: [String], _ bLines: [String], foldCase: Bool)
         -> (left: [LineVerdict], right: [LineVerdict])? {
-        let ta = tokenize(aLines)
-        let tb = tokenize(bLines)
+        let ta = tokenize(aLines, foldCase: foldCase)
+        let tb = tokenize(bLines, foldCase: foldCase)
         guard !ta.isEmpty, !tb.isEmpty, ta.count + tb.count <= wordDiffTokenLimit else { return nil }
 
         var counts: [String: Int] = [:]
@@ -452,7 +457,7 @@ enum DiffEngine {
     /// Splits lines into tokens: runs of letters, digits and underscores,
     /// and punctuation, where a run of the same punctuation character (such
     /// as a `# ======` banner) is one token. Whitespace separates tokens.
-    private static func tokenize(_ lines: [String]) -> [Token] {
+    private static func tokenize(_ lines: [String], foldCase: Bool) -> [Token] {
         var tokens: [Token] = []
         for (lineIndex, line) in lines.enumerated() {
             var offset = 0
@@ -467,7 +472,7 @@ enum DiffEngine {
                     if wordStart >= 0 {
                         tokens.append(Token(line: lineIndex,
                                             range: NSRange(location: wordStart, length: offset - wordStart),
-                                            text: String(word), isWord: true))
+                                            text: foldCase ? caseFolded(String(word)) : String(word), isWord: true))
                         wordStart = -1
                         word = String.UnicodeScalarView()
                     }
@@ -491,7 +496,7 @@ enum DiffEngine {
             if wordStart >= 0 {
                 tokens.append(Token(line: lineIndex,
                                     range: NSRange(location: wordStart, length: offset - wordStart),
-                                    text: String(word), isWord: true))
+                                    text: foldCase ? caseFolded(String(word)) : String(word), isWord: true))
             }
         }
         return tokens
@@ -721,6 +726,7 @@ enum DiffEngine {
         a: Side, b: Side,
         pureRemovedKept: inout [Int], removedHunk: inout [Int],
         pureInsertedKept: inout [Int], insertedHunk: inout [Int],
+        foldCase: Bool,
         result: inout DiffResult
     ) {
         guard pureRemovedKept.count + pureInsertedKept.count <= editedMoveLineLimit else { return }
@@ -747,8 +753,12 @@ enum DiffEngine {
             guard !regionsA.isEmpty, !regionsB.isEmpty,
                   regionsA.count * regionsB.count <= editedMoveMaxPairs else { return }
 
-            let tokensA = regionsA.map { region in tokenize(region.kept.map { a.lines[a.original($0)] }) }
-            let tokensB = regionsB.map { region in tokenize(region.kept.map { b.lines[b.original($0)] }) }
+            let tokensA = regionsA.map { region in
+                tokenize(region.kept.map { a.lines[a.original($0)] }, foldCase: foldCase)
+            }
+            let tokensB = regionsB.map { region in
+                tokenize(region.kept.map { b.lines[b.original($0)] }, foldCase: foldCase)
+            }
             func profile(_ tokens: [Token]) -> (counts: [String: Int], chars: Int) {
                 var counts: [String: Int] = [:]
                 var chars = 0
@@ -882,7 +892,7 @@ enum DiffEngine {
 
     private static func makeSide(_ text: String, options: DiffOptions) -> Side {
         let lines = text.components(separatedBy: "\n")
-        if !options.ignoreWhitespace && !options.ignoreBlankLines {
+        if !options.ignoreWhitespace && !options.ignoreBlankLines && !options.ignoreCase {
             return Side(lines: lines, keys: lines, map: nil)
         }
         var keys: [String] = []
@@ -891,7 +901,8 @@ enum DiffEngine {
         map.reserveCapacity(lines.count)
         for (index, line) in lines.enumerated() {
             if options.ignoreBlankLines, line.allSatisfy(\.isWhitespace) { continue }
-            keys.append(options.ignoreWhitespace ? normalize(line) : line)
+            let key = options.ignoreWhitespace ? normalize(line) : line
+            keys.append(options.ignoreCase ? key.lowercased() : key)
             map.append(index)
         }
         return Side(lines: lines, keys: keys, map: map)
@@ -949,6 +960,13 @@ enum DiffEngine {
 
     /// Character-level diff between two paired lines. Returns emphasized
     /// UTF-16 ranges relative to each line's start.
+    /// Lowercased for case-insensitive comparison, but only when that keeps
+    /// the UTF-16 length, so emphasis ranges still fit the original text.
+    private static func caseFolded(_ text: String) -> String {
+        let folded = text.lowercased()
+        return folded.utf16.count == text.utf16.count ? folded : text
+    }
+
     private static func intraline(_ a: String, _ b: String) -> ([NSRange], [NSRange]) {
         let ua = Array(a.utf16)
         let ub = Array(b.utf16)

@@ -446,6 +446,21 @@ print(String(format: "re-wrapped text (300 lines into 60): %.3fs", dt))
 check("re-wrapped text: identical", r.identical && r.onlyWhitespaceDiffers)
 check("re-wrapped text: fast", dt < 2.0)
 
+// ========== Ignore case ==========
+
+let caseless = DiffOptions(ignoreWhitespace: true, ignoreBlankLines: true, ignoreCase: true)
+r = DiffEngine.compare(left: "Foo Bar\nbaz", right: "foo BAR\nBaz", options: caseless)
+check("case: case-only differences ignored", r.identical && r.onlyWhitespaceDiffers)
+r = DiffEngine.compare(left: "Foo Bar\nbaz", right: "foo BAR\nBaz", options: smart)
+check("case: counted without the option", !r.identical)
+r = DiffEngine.compare(left: "Foo bar baz", right: "foo QUX baz", options: caseless)
+check("case: only the real change emphasized", r.leftInline[0] == [NSRange(location: 4, length: 3)])
+r = DiffEngine.compare(left: "Dit is een LANGE zin die over\nmeerdere regels gaat.",
+                       right: "dit is een lange zin die over meerdere regels gaat.", options: caseless)
+check("case: re-wrapped and recased is identical", r.identical)
+r = DiffEngine.compare(left: "x\nStraße", right: "x\nstrasse", options: caseless)
+check("case: different spelling still differs", !r.identical)
+
 // ========== Hunk extents (for the current-difference marker) ==========
 
 r = DiffEngine.compare(left: "1\n2\n3\n4\n5", right: "1\nX\n3\n4\nY")
@@ -459,6 +474,29 @@ check("hunks: unbalanced block spans both removed lines", r.hunks == [Hunk(left:
 r = DiffEngine.compare(left: "Alpha beta gamma delta\nepsilon zeta eta theta",
                        right: "Alpha beta gamma DELTA epsilon zeta eta theta", options: smart)
 check("hunks: word mode spans the marked lines", r.hunks == [Hunk(left: 0..<1, right: 0..<1)])
+
+// ========== Unified diff (copy differences as text), checked against diff -u ==========
+
+func unified(_ l: String, _ r: String) -> String {
+    let result = DiffEngine.compare(left: l, right: r)
+    return UnifiedDiff.make(left: l, right: r, hunks: result.hunks, leftName: "L", rightName: "R")
+}
+check("unified: change in the middle",
+      unified("a\nb\nc\nd\ne", "a\nb\nX\nd\ne") == "--- L\n+++ R\n@@ -1,5 +1,5 @@\n a\n b\n-c\n+X\n d\n e\n")
+check("unified: added at the end",
+      unified("a\nb", "a\nb\nc") == "--- L\n+++ R\n@@ -1,2 +1,3 @@\n a\n b\n+c\n")
+check("unified: removed at the start",
+      unified("x\na\nb\nc\nd", "a\nb\nc\nd") == "--- L\n+++ R\n@@ -1,4 +1,3 @@\n-x\n a\n b\n c\n")
+let twenty = (1...20).map(String.init)
+var farApart = twenty; farApart[1] = "TWEE"; farApart[17] = "ACHTTIEN"
+check("unified: far apart, two sections",
+      unified(twenty.joined(separator: "\n"), farApart.joined(separator: "\n")) ==
+      "--- L\n+++ R\n@@ -1,5 +1,5 @@\n 1\n-2\n+TWEE\n 3\n 4\n 5\n@@ -15,6 +15,6 @@\n 15\n 16\n 17\n-18\n+ACHTTIEN\n 19\n 20\n")
+var close = twenty; close[4] = "VIJF"; close[8] = "NEGEN"
+check("unified: close together, one section",
+      unified(twenty.joined(separator: "\n"), close.joined(separator: "\n")) ==
+      "--- L\n+++ R\n@@ -2,11 +2,11 @@\n 2\n 3\n 4\n-5\n+VIJF\n 6\n 7\n 8\n-9\n+NEGEN\n 10\n 11\n 12\n")
+check("unified: nothing for identical texts", unified("a\nb", "a\nb").isEmpty)
 
 // ========== Real-world fixture: re-wrapped and re-organized automation ==========
 

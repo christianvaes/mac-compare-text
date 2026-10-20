@@ -2,16 +2,24 @@
 # Builds "Compare Text.app": universal binary (Apple Silicon + Intel),
 # sandboxed, hardened runtime, plus a distribution zip in dist/.
 # With --install, the new build also replaces /Applications/Compare Text.app.
+# With --selftest, the end-to-end self-test is compiled in (test builds only;
+# never combined with --install).
 set -euo pipefail
 cd "$(dirname "$0")"
 
 INSTALL=0
+SWIFT_FLAGS=()
 for arg in "$@"; do
     case "$arg" in
         --install) INSTALL=1 ;;
-        *) echo "Usage: ./build.sh [--install]" >&2; exit 2 ;;
+        --selftest) SWIFT_FLAGS+=(-D SELFTEST) ;;
+        *) echo "Usage: ./build.sh [--install | --selftest]" >&2; exit 2 ;;
     esac
 done
+if [ "$INSTALL" -eq 1 ] && [ ${#SWIFT_FLAGS[@]} -gt 0 ]; then
+    echo "ERROR: --selftest builds are not installed" >&2
+    exit 2
+fi
 
 # The .noindex suffix keeps Spotlight, and with it the Apps menu, from
 # listing the build output as a second copy of the app.
@@ -23,9 +31,9 @@ rm -rf "$BUILD" build
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 # Compile for both architectures and merge with lipo.
-swiftc -O -parse-as-library -target arm64-apple-macos14.0 \
+swiftc -O -parse-as-library -target arm64-apple-macos14.0 "${SWIFT_FLAGS[@]}" \
     Sources/*.swift -o "$BUILD/CompareText-arm64"
-swiftc -O -parse-as-library -target x86_64-apple-macos14.0 \
+swiftc -O -parse-as-library -target x86_64-apple-macos14.0 "${SWIFT_FLAGS[@]}" \
     Sources/*.swift -o "$BUILD/CompareText-x86_64"
 lipo -create "$BUILD/CompareText-arm64" "$BUILD/CompareText-x86_64" \
     -output "$APP/Contents/MacOS/CompareText"

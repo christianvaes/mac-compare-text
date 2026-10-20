@@ -111,12 +111,17 @@ final class PaneController: NSObject, NSTextViewDelegate {
     let textView: NSTextView
     let sidebar: LineNumberSidebar
     private let placeholder = PlaceholderView()
+    let overview = OverviewBar()
 
     /// Bumped on every edit; used to discard stale diff results.
     private(set) var generation = 0
     var onEdit: (() -> Void)?
     /// Called with the URLs of files dropped on the text.
     var onFilesDropped: (([URL]) -> Void)?
+    /// Called after text was pasted or dropped into the pane.
+    var onPaste: (() -> Void)?
+    /// Called with the line clicked in the overview strip.
+    var onOverviewClick: ((Int) -> Void)?
 
     private let defaultTitle: String
     /// The file the text was loaded from, valid while the text is unedited.
@@ -132,6 +137,9 @@ final class PaneController: NSObject, NSTextViewDelegate {
         super.init()
         (textView as? FileDropTextView)?.onFileDrop = { [weak self] urls in
             self?.onFilesDropped?(urls)
+        }
+        (textView as? FileDropTextView)?.onPaste = { [weak self] in
+            self?.onPaste?()
         }
 
         assert(textView.textLayoutManager != nil, "text view must stay on TextKit 2")
@@ -165,7 +173,9 @@ final class PaneController: NSObject, NSTextViewDelegate {
         // overdrawn on macOS 26.
         card.addSubview(sidebar)
         card.addSubview(scrollView)
+        card.addSubview(overview)
         card.addSubview(placeholder)
+        overview.onClick = { [weak self] line in self?.onOverviewClick?(line) }
         box.addSubview(card)
         box.addSubview(header)
 
@@ -196,17 +206,31 @@ final class PaneController: NSObject, NSTextViewDelegate {
         let contentHeight = cardFrame.height
         let sidebarWidth = sidebar.desiredThickness
         sidebar.frame = NSRect(x: 0, y: 0, width: sidebarWidth, height: contentHeight)
+        let overviewWidth = OverviewBar.width
         scrollView.frame = NSRect(x: sidebarWidth, y: 0,
-                                  width: max(0, cardFrame.width - sidebarWidth),
+                                  width: max(0, cardFrame.width - sidebarWidth - overviewWidth),
                                   height: contentHeight)
+        overview.frame = NSRect(x: max(0, cardFrame.width - overviewWidth), y: 0,
+                                width: overviewWidth, height: contentHeight)
         placeholder.frame = NSRect(x: sidebarWidth, y: contentHeight - 30,
-                                   width: max(0, cardFrame.width - sidebarWidth), height: 30)
+                                   width: max(0, cardFrame.width - sidebarWidth - overviewWidth), height: 30)
         sidebar.needsDisplay = true
         header.needsDisplay = true
+        updateOverviewViewport()
     }
 
     @objc private func scrolled(_ notification: Notification) {
         sidebar.needsDisplay = true
+        updateOverviewViewport()
+    }
+
+    private func updateOverviewViewport() {
+        guard let top = topVerticalPosition() else {
+            overview.visibleRange = nil
+            return
+        }
+        let bottom = verticalPosition(atViewportY: scrollView.documentVisibleRect.height) ?? Double(sidebar.lineCount)
+        overview.visibleRange = (top, max(top, bottom))
     }
 
     // MARK: - Text access
@@ -286,6 +310,9 @@ final class PaneController: NSObject, NSTextViewDelegate {
     // MARK: - Highlights
 
     func clearHighlights() {
+        overview.marks = []
+        overview.currentRange = nil
+        overview.lineCount = sidebar.lineCount
         guard let storage = textView.textStorage, storage.length > 0 else { return }
         storage.removeAttribute(.backgroundColor, range: NSRange(location: 0, length: storage.length))
     }
@@ -327,6 +354,13 @@ final class PaneController: NSObject, NSTextViewDelegate {
             }
         }
         storage.endEditing()
+
+        let strong = { (color: NSColor) in color.withAlphaComponent(0.85) }
+        var marks = OverviewBar.marks(for: movedLines, color: strong(movedColor ?? .systemOrange))
+        marks += OverviewBar.marks(for: lines, color: strong(lineColor))
+        overview.lineCount = sidebar.lineCount
+        overview.marks = marks
+        updateOverviewViewport()
     }
 
     // MARK: - Navigation
@@ -340,6 +374,7 @@ final class PaneController: NSObject, NSTextViewDelegate {
     /// Marks the lines of the current difference (nil clears the marker).
     func setCurrentDifference(_ range: Range<Int>?) {
         sidebar.currentRange = range
+        overview.currentRange = range
     }
 
     /// Scrolls so the line sits a third down the viewport, or as close as
@@ -366,9 +401,14 @@ final class PaneController: NSObject, NSTextViewDelegate {
     /// Logical position (0-based line + fraction within it) at the top of
     /// the visible viewport. nil when layout cannot resolve it (empty doc).
     func topVerticalPosition() -> Double? {
+        verticalPosition(atViewportY: 0)
+    }
+
+    /// Logical position at a height within the viewport (0 = its top).
+    func verticalPosition(atViewportY viewportY: CGFloat) -> Double? {
         guard let layoutManager = textView.textLayoutManager,
               let contentStorage = layoutManager.textContentManager as? NSTextContentStorage else { return nil }
-        let visibleY = scrollView.documentVisibleRect.origin.y
+        let visibleY = scrollView.documentVisibleRect.origin.y + viewportY
         let yInText = max(0, visibleY - textView.textContainerInset.height)
         guard let fragment = layoutManager.textLayoutFragment(for: CGPoint(x: 0, y: yInText)) else { return nil }
         let offset = contentStorage.offset(from: contentStorage.documentRange.location,
@@ -381,7 +421,7 @@ final class PaneController: NSObject, NSTextViewDelegate {
 
     /// Scrolls so the given logical position sits at the top of the viewport,
     /// clamped to the document. Only this pane moves; callers guard loops.
-    func scroll(toVerticalPosition position: Double) {
+    func scroll(toVerticalPosition position: Double, horizontalOffset: CGFloat? = nil) {
         guard sidebar.lineCount > 0 else { return }
         let line = min(max(0, Int(position)), sidebar.lineCount - 1)
         let fraction = CGFloat(min(max(position - Double(line), 0), 1))
@@ -393,9 +433,41 @@ final class PaneController: NSObject, NSTextViewDelegate {
         let clipHeight = scrollView.contentView.bounds.height
         let maxY = max(0, (scrollView.documentView?.frame.height ?? 0) - clipHeight)
         targetY = min(max(0, targetY), maxY)
-        let currentX = scrollView.documentVisibleRect.origin.x
-        scrollView.contentView.scroll(to: NSPoint(x: currentX, y: targetY))
+        var targetX = scrollView.documentVisibleRect.origin.x
+        if let horizontalOffset {
+            let maxX = max(0, (scrollView.documentView?.frame.width ?? 0) - scrollView.contentView.bounds.width)
+            targetX = min(max(0, horizontalOffset), maxX)
+        }
+        scrollView.contentView.scroll(to: NSPoint(x: targetX, y: targetY))
         scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+
+    /// Long lines wrap at the pane's width (the default) or run on past it
+    /// with a horizontal scroller.
+    func setWrapsLines(_ wraps: Bool) {
+        guard let container = textView.textContainer else { return }
+        let unlimited = CGFloat.greatestFiniteMagnitude
+        scrollView.hasHorizontalScroller = !wraps
+        textView.isHorizontallyResizable = !wraps
+        textView.autoresizingMask = wraps ? [.width] : []
+        container.widthTracksTextView = wraps
+        if wraps {
+            let width = scrollView.contentSize.width
+            container.containerSize = NSSize(width: width, height: unlimited)
+            textView.setFrameSize(NSSize(width: width, height: textView.frame.height))
+            scrollView.contentView.scroll(to: NSPoint(x: 0, y: scrollView.documentVisibleRect.origin.y))
+        } else {
+            textView.maxSize = NSSize(width: unlimited, height: unlimited)
+            container.containerSize = NSSize(width: unlimited, height: unlimited)
+        }
+        if let layoutManager = textView.textLayoutManager {
+            layoutManager.invalidateLayout(for: layoutManager.documentRange)
+            layoutManager.textViewportLayoutController.layoutViewport()
+        }
+        textView.sizeToFit()
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        sidebar.needsDisplay = true
+        updateOverviewViewport()
     }
 
     /// Y of the top of a line, measured from the top of the visible viewport
