@@ -278,6 +278,7 @@ final class PaneController: NSObject, NSTextViewDelegate {
         clearHighlights()
         placeholder.isHidden = !textView.string.isEmpty
         header.detail = textView.string.isEmpty ? "" : L10n.lineCount(sidebar.lineCount)
+        sidebar.currentRange = nil
         updateTitle()
         onEdit?()
     }
@@ -333,6 +334,30 @@ final class PaneController: NSObject, NSTextViewDelegate {
     func scrollToLine(_ line: Int) {
         guard let range = sidebar.characterRange(ofLine: line) else { return }
         textView.scrollRangeToVisible(NSRange(location: range.location, length: 0))
+        sidebar.needsDisplay = true
+    }
+
+    /// Marks the lines of the current difference (nil clears the marker).
+    func setCurrentDifference(_ range: Range<Int>?) {
+        sidebar.currentRange = range
+    }
+
+    /// Scrolls so the line sits a third down the viewport, or as close as
+    /// the document allows. Unlike scrolling it merely into view, this
+    /// moves on every call, so stepping through differences that are all
+    /// on screen visibly goes from one to the next.
+    func reveal(line: Int) {
+        guard sidebar.lineCount > 0 else { return }
+        let target = min(max(0, line), sidebar.lineCount - 1)
+        var lineTop = textView.frame.height
+        if let frame = layoutFragmentFrame(ofLine: target) {
+            lineTop = frame.minY + textView.textContainerInset.height
+        }
+        let clipHeight = scrollView.contentView.bounds.height
+        let maxY = max(0, (scrollView.documentView?.frame.height ?? 0) - clipHeight)
+        let targetY = min(max(0, lineTop - clipHeight / 3), maxY)
+        scrollView.contentView.scroll(to: NSPoint(x: scrollView.documentVisibleRect.origin.x, y: targetY))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
         sidebar.needsDisplay = true
     }
 

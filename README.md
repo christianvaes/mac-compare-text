@@ -15,8 +15,11 @@ The UI is in Dutch or English, depending on your system language.
    that differ within a line (WinMerge-style):
    - **red** (left) = line removed or changed
    - **green** (right) = line added or changed
-4. Navigate through the differences with the **chevrons** in the toolbar (or **⌘[** / **⌘]**);
-   both sides scroll to the difference automatically.
+4. Navigate through the differences with the **chevrons** in the toolbar (or **⌘[** / **⌘]**).
+   The current difference is marked with a blue bar next to its line numbers on
+   both sides (a blue line where lines were added on the other side) and is
+   brought a third down the view, so every step visibly moves; the status bar
+   names its lines.
 5. For a new comparison: select all (**⌘A**), paste the new text over it and
    compare again. Highlights disappear automatically as soon as you type or
    paste.

@@ -90,10 +90,23 @@ enum DebugSelfTest {
             return range.location == lineStart + 4 && range.length >= 3
         })
 
-        // 4. Navigation.
+        // 4. Navigation: all three differences are on screen at once, so the
+        // marker has to show which one is current at every step.
+        check("marker: first difference after compare",
+              left.sidebar.currentRange == 1..<2 && right.sidebar.currentRange == 1..<2)
         controller.nextDifference(nil)
+        check("marker: removed line, insertion point on the right",
+              left.sidebar.currentRange == 3..<4 && right.sidebar.currentRange == 3..<3)
+        check("marker: summary names the lines",
+              controller.summaryText.contains("2") && controller.summaryText.contains("4"))
         controller.nextDifference(nil)
-        check("navigation cycles", true) // exercised; scroll assertions below on big text
+        check("marker: added line, insertion point at the end on the left",
+              left.sidebar.currentRange == 5..<5 && right.sidebar.currentRange == 4..<5)
+        controller.nextDifference(nil)
+        check("marker: wraps around to the first", left.sidebar.currentRange == 1..<2)
+        controller.previousDifference(nil)
+        check("marker: previous goes back to the last", right.sidebar.currentRange == 4..<5)
+        renderWindow(controller.window, suffix: "marker")
 
         // 4b. Window resize: manual layout must follow.
         let originalFrame = controller.window.frame
@@ -421,10 +434,19 @@ enum DebugSelfTest {
             check("big text fast enough", elapsed < 5.0)
             check("big text one hunk", controller.hunkAnchors.count == 1)
 
-            // Navigation must scroll the changed line into view.
+            // Navigation must scroll the changed line into view, a third down.
             controller.nextDifference(nil)
             let visible = controller.left.scrollView.documentVisibleRect
             check("navigation scrolled down", visible.origin.y > 1000)
+            let third = visible.height / 3
+            check("navigation: difference a third down on both sides",
+                  abs(controller.left.viewportY(forLine: 10_000) - third) < 20
+                  && abs(controller.right.viewportY(forLine: 10_000) - third) < 20)
+            check("navigation: marker on the changed line", controller.left.sidebar.currentRange == 10_000..<10_001)
+
+            // Editing clears the marker: it no longer matches the text.
+            controller.left.textView.insertText("x", replacementRange: NSRange(location: 0, length: 0))
+            check("marker: cleared on edit", controller.left.sidebar.currentRange == nil)
 
             // 9. Clear.
             controller.clearAll(nil)

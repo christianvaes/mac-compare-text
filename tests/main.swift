@@ -446,6 +446,20 @@ print(String(format: "re-wrapped text (300 lines into 60): %.3fs", dt))
 check("re-wrapped text: identical", r.identical && r.onlyWhitespaceDiffers)
 check("re-wrapped text: fast", dt < 2.0)
 
+// ========== Hunk extents (for the current-difference marker) ==========
+
+r = DiffEngine.compare(left: "1\n2\n3\n4\n5", right: "1\nX\n3\n4\nY")
+check("hunks: one per difference", r.hunks == [Hunk(left: 1..<2, right: 1..<2), Hunk(left: 4..<5, right: 4..<5)])
+r = DiffEngine.compare(left: "a\nb", right: "a\nb\nc")
+check("hunks: added at end is empty at end on the left", r.hunks == [Hunk(left: 2..<2, right: 2..<3)])
+r = DiffEngine.compare(left: "x\na\nb", right: "a\nb")
+check("hunks: removed at start is empty at start on the right", r.hunks == [Hunk(left: 0..<1, right: 0..<0)])
+r = DiffEngine.compare(left: "a\np\nq\nz", right: "a\nP\nz")
+check("hunks: unbalanced block spans both removed lines", r.hunks == [Hunk(left: 1..<3, right: 1..<2)])
+r = DiffEngine.compare(left: "Alpha beta gamma delta\nepsilon zeta eta theta",
+                       right: "Alpha beta gamma DELTA epsilon zeta eta theta", options: smart)
+check("hunks: word mode spans the marked lines", r.hunks == [Hunk(left: 0..<1, right: 0..<1)])
+
 // ========== Real-world fixture: re-wrapped and re-organized automation ==========
 
 if CommandLine.arguments.count >= 5 {
@@ -458,6 +472,11 @@ if CommandLine.arguments.count >= 5 {
     check("accu: few red lines", r.leftChanged.count <= 16)
     check("accu: few green lines", r.rightChanged.count <= 30)
     check("accu: two moved blocks", r.movedPairs.count == 2)
+    check("accu: one extent per difference", r.hunks.count == r.hunkAnchors.count && !r.hunks.isEmpty)
+    var ordered = true
+    for k in 1..<r.hunks.count where r.hunks[k].left.lowerBound < r.hunks[k - 1].left.lowerBound
+        || r.hunks[k].right.lowerBound < r.hunks[k - 1].right.lowerBound { ordered = false }
+    check("accu: extents in document order", ordered)
     let paragraph = lines1.firstIndex { $0.contains("Vult de accu zo veel mogelijk") }!
     check("accu: re-wrapped paragraph unmarked",
           !r.leftChanged.contains(paragraph) && !r.leftMoved.contains(paragraph))

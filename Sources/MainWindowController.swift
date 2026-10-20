@@ -100,6 +100,7 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
 
     private var comparing = false
     private(set) var hunkAnchors: [(left: Int, right: Int)] = []
+    private(set) var hunks: [Hunk] = []
     private(set) var movedPairs: [MovedBlock] = []
     private var currentHunk = -1
 
@@ -335,6 +336,7 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
 
     private func textsEdited() {
         hunkAnchors = []
+        hunks = []
         movedPairs = []
         currentHunk = -1
         updateNavigationButtons()
@@ -398,6 +400,7 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
                                   movedLines: result.rightMoved, movedColor: Self.movedLineColor)
 
             hunkAnchors = result.hunkAnchors
+            hunks = result.hunks
             movedPairs = result.movedPairs
             currentHunk = -1
             updateNavigationButtons()
@@ -411,6 +414,8 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
 
             if result.identical {
                 setSummary(result.onlyWhitespaceDiffers ? L10n.identicalExceptWhitespace : L10n.identical)
+                left.setCurrentDifference(nil)
+                right.setCurrentDifference(nil)
                 scrollSync.alignNow(drivenBy: left)
             } else {
                 setSummary(L10n.summary(movedBlocks: result.movedPairs.count,
@@ -423,14 +428,14 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
     }
 
     @objc func nextDifference(_ sender: Any?) {
-        guard !hunkAnchors.isEmpty else { return }
-        currentHunk = (currentHunk + 1) % hunkAnchors.count
+        guard !hunks.isEmpty else { return }
+        currentHunk = (currentHunk + 1) % hunks.count
         showCurrentHunk()
     }
 
     @objc func previousDifference(_ sender: Any?) {
-        guard !hunkAnchors.isEmpty else { return }
-        currentHunk = currentHunk <= 0 ? hunkAnchors.count - 1 : currentHunk - 1
+        guard !hunks.isEmpty else { return }
+        currentHunk = currentHunk <= 0 ? hunks.count - 1 : currentHunk - 1
         showCurrentHunk()
     }
 
@@ -438,20 +443,32 @@ final class MainWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate,
         scrollToCurrentHunk(updateSummary: true)
     }
 
+    /// The lines of the current difference on each side. For a moved
+    /// block, the other side shows where it moved from or to, so old and
+    /// new position sit side by side.
+    var currentDifferenceRanges: (left: Range<Int>, right: Range<Int>)? {
+        guard hunks.indices.contains(currentHunk) else { return nil }
+        let hunk = hunks[currentHunk]
+        if let first = hunk.left.first, let pair = movedPairs.first(where: { $0.left.contains(first) }) {
+            return (hunk.left, pair.right)
+        }
+        if let first = hunk.right.first, let pair = movedPairs.first(where: { $0.right.contains(first) }) {
+            return (pair.left, hunk.right)
+        }
+        return (hunk.left, hunk.right)
+    }
+
     private func scrollToCurrentHunk(updateSummary: Bool) {
-        let anchor = hunkAnchors[currentHunk]
-        // For a moved block, show the counterpart location on the right so
-        // old and new position sit side by side.
-        var rightLine = anchor.right
-        if let pair = movedPairs.first(where: { $0.left.contains(anchor.left) }) {
-            rightLine = pair.right.lowerBound
-        }
+        guard let ranges = currentDifferenceRanges else { return }
         scrollSync.performWithoutSync {
-            left.scrollToLine(anchor.left)
-            right.scrollToLine(rightLine)
+            left.reveal(line: ranges.left.lowerBound)
+            right.reveal(line: ranges.right.lowerBound)
         }
+        left.setCurrentDifference(ranges.left)
+        right.setCurrentDifference(ranges.right)
         if updateSummary {
-            setSummary(L10n.differencePosition(currentHunk + 1, of: hunkAnchors.count))
+            setSummary(L10n.differencePosition(currentHunk + 1, of: hunks.count,
+                                               left: ranges.left, right: ranges.right))
         }
     }
 

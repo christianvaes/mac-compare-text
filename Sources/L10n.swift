@@ -108,7 +108,19 @@ enum L10n {
         return text + t(" — ⌘] voor het volgende.", " — ⌘] for the next one.")
     }
 
-    static func differencePosition(_ index: Int, of total: Int) -> String {
-        t("Verschil \(index) van \(total).", "Difference \(index) of \(total).")
+    static func differencePosition(_ index: Int, of total: Int, left: Range<Int>, right: Range<Int>) -> String {
+        t("Verschil \(index) van \(total) — links \(lines(left)), rechts \(lines(right)).",
+          "Difference \(index) of \(total) — left \(lines(left)), right \(lines(right)).")
+    }
+
+    /// "regel 12", "regels 12–15", or for lines added on the other side
+    /// "na regel 11" / "aan het begin".
+    private static func lines(_ range: Range<Int>) -> String {
+        if range.isEmpty {
+            return range.lowerBound == 0 ? t("aan het begin", "at the start")
+                : t("na regel \(range.lowerBound)", "after line \(range.lowerBound)")
+        }
+        if range.count == 1 { return t("regel \(range.lowerBound + 1)", "line \(range.lowerBound + 1)") }
+        return t("regels \(range.lowerBound + 1)–\(range.upperBound)", "lines \(range.lowerBound + 1)–\(range.upperBound)")
     }
 }

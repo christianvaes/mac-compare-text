@@ -22,6 +22,14 @@ struct MovedBlock: Sendable, Equatable {
     var right: Range<Int>
 }
 
+/// The lines one difference spans on each side (original line indices,
+/// half-open). An empty range marks where lines were added on the other
+/// side: before the line at its lower bound (`lines.count` = at the end).
+struct Hunk: Sendable, Equatable {
+    var left: Range<Int>
+    var right: Range<Int>
+}
+
 /// Result of a line-based comparison. Line indices are 0-based and always
 /// refer to the ORIGINAL texts, regardless of options.
 struct DiffResult: Sendable {
@@ -36,6 +44,8 @@ struct DiffResult: Sendable {
     /// One anchor per contiguous block of differences, for navigation.
     /// (line in left text, line in right text)
     var hunkAnchors: [(left: Int, right: Int)] = []
+    /// The extent of each difference, in the same order as `hunkAnchors`.
+    var hunks: [Hunk] = []
     /// Blocks present in both texts at different positions.
     var movedPairs: [MovedBlock] = []
     var leftMoved: Set<Int> = []
@@ -71,6 +81,16 @@ enum DiffEngine {
         /// index; clamps past-the-end to the last line.
         func anchor(_ kept: Int) -> Int {
             kept < keys.count ? original(kept) : max(0, lines.count - 1)
+        }
+
+        /// Original lines covered by a run of kept lines; for an empty run,
+        /// the empty range at the insertion point.
+        func span(_ kept: Range<Int>) -> Range<Int> {
+            guard let first = kept.first, let last = kept.last else {
+                let at = kept.lowerBound < keys.count ? original(kept.lowerBound) : lines.count
+                return at..<at
+            }
+            return original(first)..<(original(last) + 1)
         }
     }
 
@@ -202,8 +222,9 @@ enum DiffEngine {
                                    bKept.map { b.lines[b.original($0)] }) {
             func apply(_ lineVerdicts: [LineVerdict], side: Side, kept: Range<Int>,
                        changed: inout Set<Int>, inline: inout [Int: [NSRange]],
-                       pure: inout [Int]) -> Int? {
+                       pure: inout [Int]) -> Range<Int>? {
                 var first: Int?
+                var last: Int?
                 for (offset, verdict) in lineVerdicts.enumerated() {
                     let line = side.original(kept.lowerBound + offset)
                     switch verdict {
@@ -217,19 +238,23 @@ enum DiffEngine {
                         pure.append(kept.lowerBound + offset)
                     }
                     if first == nil { first = line }
+                    last = line
                 }
-                return first
+                guard let first, let last else { return nil }
+                return first..<(last + 1)
             }
-            let firstA = apply(verdicts.left, side: a, kept: aKept,
-                               changed: &result.leftChanged, inline: &result.leftInline,
-                               pure: &pureRemovedKept)
-            let firstB = apply(verdicts.right, side: b, kept: bKept,
-                               changed: &result.rightChanged, inline: &result.rightInline,
-                               pure: &pureInsertedKept)
+            let markedA = apply(verdicts.left, side: a, kept: aKept,
+                                changed: &result.leftChanged, inline: &result.leftInline,
+                                pure: &pureRemovedKept)
+            let markedB = apply(verdicts.right, side: b, kept: bKept,
+                                changed: &result.rightChanged, inline: &result.rightInline,
+                                pure: &pureInsertedKept)
             // A hunk that turned out to be only re-wrapped is no difference.
-            if firstA != nil || firstB != nil {
-                result.hunkAnchors.append((left: firstA ?? a.anchor(aKept.lowerBound),
-                                           right: firstB ?? b.anchor(bKept.lowerBound)))
+            // A side without marked lines spans the whole (re-wrapped) region.
+            if markedA != nil || markedB != nil {
+                result.hunkAnchors.append((left: markedA?.lowerBound ?? a.anchor(aKept.lowerBound),
+                                           right: markedB?.lowerBound ?? b.anchor(bKept.lowerBound)))
+                result.hunks.append(Hunk(left: markedA ?? a.span(aKept), right: markedB ?? b.span(bKept)))
             }
             return
         }
@@ -237,6 +262,7 @@ enum DiffEngine {
         // Line by line: the i-th removed line is paired with the i-th
         // inserted line for intra-line refinement, the rest is single-sided.
         result.hunkAnchors.append((left: a.anchor(aKept.lowerBound), right: b.anchor(bKept.lowerBound)))
+        result.hunks.append(Hunk(left: a.span(aKept), right: b.span(bKept)))
         let pairs = min(aKept.count, bKept.count)
         for offset in 0..<pairs {
             let keptA = aKept.lowerBound + offset

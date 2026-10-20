@@ -73,6 +73,17 @@ final class LineNumberSidebar: NSView {
         return low
     }
 
+    /// The current difference: its lines get a marker bar and highlighted
+    /// numbers. An empty range draws a marker line where lines were added on
+    /// the other side.
+    var currentRange: Range<Int>? {
+        didSet { if currentRange != oldValue { needsDisplay = true } }
+    }
+
+    /// Fixed blue rather than the accent color, which can be orange (the
+    /// color for moved lines) or another diff color.
+    static let markerColor = NSColor.systemBlue
+
     override func draw(_ dirtyRect: NSRect) {
         guard let textView, let scrollView,
               let layoutManager = textView.textLayoutManager,
@@ -86,19 +97,34 @@ final class LineNumberSidebar: NSView {
             .foregroundColor: NSColor.tertiaryLabelColor,
         ]
 
+        let currentAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .bold),
+            .foregroundColor: Self.markerColor,
+        ]
+
         let visible = scrollView.documentVisibleRect
         let inset = textView.textContainerInset
+        var markerTop: CGFloat?
+        var markerBottom: CGFloat?
+        var insertionY: CGFloat?
 
         func drawNumber(_ line: Int, fragmentFrame frame: CGRect) {
             let y = frame.minY + inset.height - visible.origin.y
+            if let range = currentRange, range.isEmpty, range.lowerBound == line { insertionY = y }
             guard y + frame.height >= 0, y <= bounds.height else { return }
+            let isCurrent = currentRange?.contains(line) == true
+            if isCurrent {
+                markerTop = min(markerTop ?? y, y)
+                markerBottom = max(markerBottom ?? y + frame.height, y + frame.height)
+            }
             let label = "\(line + 1)" as NSString
-            let size = label.size(withAttributes: attributes)
+            let style = isCurrent ? currentAttributes : attributes
+            let size = label.size(withAttributes: style)
             let point = NSPoint(
                 x: bounds.width - size.width - 6,
                 y: y + (min(frame.height, 18) - size.height) / 2
             )
-            label.draw(at: point, withAttributes: attributes)
+            label.draw(at: point, withAttributes: style)
         }
 
         let topPoint = CGPoint(x: 0, y: max(0, visible.origin.y - inset.height))
@@ -129,6 +155,24 @@ final class LineNumberSidebar: NSView {
         } else if lastLine == lineStarts.count - 2, lineStarts[lineStarts.count - 1] == textLength {
             drawNumber(lineStarts.count - 1,
                        fragmentFrame: CGRect(x: 0, y: lastFrame.maxY, width: 10, height: lastFrame.height))
+        }
+        // Added at the very end on the other side: below the last line.
+        if let range = currentRange, range.isEmpty, range.lowerBound >= lineStarts.count, lastLine >= 0 {
+            insertionY = lastFrame.maxY + inset.height - visible.origin.y
+        }
+
+        Self.markerColor.setFill()
+        if let top = markerTop, let bottom = markerBottom {
+            let clippedTop = max(0, top + 1)
+            let clippedBottom = min(bounds.height, bottom - 1)
+            if clippedBottom > clippedTop {
+                NSBezierPath(roundedRect: NSRect(x: 2, y: clippedTop, width: 3, height: clippedBottom - clippedTop),
+                             xRadius: 1.5, yRadius: 1.5).fill()
+            }
+        }
+        if let y = insertionY, y >= -2, y <= bounds.height + 2 {
+            NSBezierPath(roundedRect: NSRect(x: 2, y: y - 1.5, width: bounds.width - 6, height: 3),
+                         xRadius: 1.5, yRadius: 1.5).fill()
         }
     }
 }
